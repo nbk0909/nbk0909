@@ -69,13 +69,12 @@ class FamilyCardMember(Base, UUIDPrimaryKeyMixin):
         UniqueConstraint("family_card_id", "person_id", name="uq_card_member"),
         # الشخص لا ينتمي لأكثر من بطاقة عائلة نشطة في آن واحد: عند الزواج
         # يُرفع الابن/الابنة من بطاقة الأب ويُقيَّد في بطاقة الأسرة الجديدة.
-        # فهرس جزئي — يُفرض في PostgreSQL فقط، وSQLite لا يدعم شرط WHERE هنا،
-        # فتتكفّل طبقة الخدمات بالتحقق في بيئة التطوير.
         Index(
             "uq_person_active_card",
             "person_id",
             unique=True,
             postgresql_where=text("removed_at IS NULL"),
+            sqlite_where=text("removed_at IS NULL"),
         ),
     )
 

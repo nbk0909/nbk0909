@@ -50,6 +50,16 @@ def engine():
             conn.execute(sa_text("CREATE SCHEMA public"))
             conn.execute(sa_text('CREATE EXTENSION IF NOT EXISTS "pg_trgm"'))
         Base.metadata.create_all(bind=eng)
+
+        # الجداول وحدها لا تكفي: دالة تطبيع النص العربي والمُشغّلات والعروض
+        # مكتوبة في sql_objects.sql. بدونها تفشل استعلامات البحث، وتُختبر
+        # قاعدة لا تشبه قاعدة الإنتاج.
+        sql_objects = (
+            Path(__file__).resolve().parents[2] / "database" / "sql_objects.sql"
+        )
+        with eng.begin() as conn:
+            conn.execute(sa_text(sql_objects.read_text(encoding="utf-8")))
+
         yield eng
         eng.dispose()
         return
@@ -111,7 +121,19 @@ def governorate(db) -> Governorate:
 def permissions(db) -> dict[str, Permission]:
     """صلاحيات مختصرة تكفي للاختبارات."""
     perms = {}
-    for resource in ("persons", "births", "users"):
+    for resource in (
+        "persons",
+        "births",
+        "deaths",
+        "marriages",
+        "divorces",
+        "documents",
+        "family_cards",
+        "requests",
+        "reports",
+        "users",
+        "audit",
+    ):
         for action in ("create", "read", "update", "delete", "approve"):
             code = f"{resource}.{action}"
             p = Permission(
@@ -132,15 +154,30 @@ def roles(db, permissions) -> dict[str, Role]:
     viewer = Role(code="viewer", name_ar="مستعلم", is_system=True)
     viewer.permissions = [p for c, p in permissions.items() if c.endswith(".read")]
 
+    # موظف الإدخال: ينشئ ويقرأ ويعدّل، ولا يحذف ولا يعتمد
     clerk = Role(code="clerk", name_ar="موظف إدخال", is_system=True)
     clerk.permissions = [
-        p for c, p in permissions.items()
-        if c.startswith("persons.") and not c.endswith(".delete")
+        p
+        for c, p in permissions.items()
+        if not c.endswith((".delete", ".approve")) and not c.startswith(("users.", "audit."))
     ]
 
-    db.add_all([admin, viewer, clerk])
+    # مدير السجل: كصلاحيات الموظف مع الاعتماد
+    registrar = Role(code="registrar", name_ar="مدير سجل", is_system=True)
+    registrar.permissions = [
+        p
+        for c, p in permissions.items()
+        if not c.endswith(".delete") and not c.startswith(("users.", "audit."))
+    ]
+
+    db.add_all([admin, viewer, clerk, registrar])
     db.commit()
-    return {"admin": admin, "viewer": viewer, "clerk": clerk}
+    return {
+        "admin": admin,
+        "viewer": viewer,
+        "clerk": clerk,
+        "registrar": registrar,
+    }
 
 
 def _make_user(db, roles, *, username, role, **kwargs) -> User:
@@ -171,6 +208,11 @@ def viewer_user(db, roles) -> User:
 @pytest.fixture
 def clerk_user(db, roles) -> User:
     return _make_user(db, roles, username="clerk", role="clerk")
+
+
+@pytest.fixture
+def registrar_user(db, roles) -> User:
+    return _make_user(db, roles, username="registrar", role="registrar")
 
 
 @pytest.fixture

@@ -47,6 +47,7 @@ class Document(Base, UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Audit
             "document_type",
             unique=True,
             postgresql_where=text("status = 'سارية' AND deleted_at IS NULL"),
+            sqlite_where=text("status = 'سارية' AND deleted_at IS NULL"),
         ),
     )
 

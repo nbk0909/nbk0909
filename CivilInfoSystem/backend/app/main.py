@@ -19,6 +19,9 @@ from slowapi.middleware import SlowAPIMiddleware
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.api.v1 import auth as auth_routes
+from app.api.v1 import documents as document_routes
+from app.api.v1 import persons as person_routes
+from app.api.v1 import vital as vital_routes
 from app.config import settings
 from app.core.rate_limit import limiter, rate_limit_handler
 from app.database import (
@@ -125,13 +128,20 @@ async def add_security_headers(request: Request, call_next):
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(_request: Request, exc: RequestValidationError):
     """يحوّل أخطاء التحقق إلى رسائل عربية مفهومة."""
-    errors = [
-        {
-            "الحقل": ".".join(str(part) for part in err["loc"][1:]) or "غير محدد",
-            "الرسالة": err["msg"],
-        }
-        for err in exc.errors()
-    ]
+    from app.schemas.common import field_label
+
+    errors = []
+    for err in exc.errors():
+        raw_name = ".".join(str(part) for part in err["loc"][1:]) or "غير محدد"
+        errors.append(
+            {
+                # يُعرض اسم الحقل بالعربية للمستخدم، ويُرفق المعرّف البرمجي
+                # ليتمكّن العميل من إبراز الحقل الصحيح في النموذج
+                "الحقل": field_label(raw_name.split(".")[-1]),
+                "المعرّف": raw_name,
+                "الرسالة": err["msg"],
+            }
+        )
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         content={"نجاح": False, "الرسالة": "بيانات غير صالحة", "الأخطاء": errors},
@@ -180,7 +190,6 @@ async def root() -> dict:
 # -----------------------------------------------------------------------------
 
 app.include_router(auth_routes.router, prefix=settings.API_V1_PREFIX)
-
-# تُضاف في المرحلة الرابعة:
-# app.include_router(persons.router,   prefix=settings.API_V1_PREFIX)
-# app.include_router(births.router,    prefix=settings.API_V1_PREFIX)
+app.include_router(person_routes.router, prefix=settings.API_V1_PREFIX)
+app.include_router(vital_routes.router, prefix=settings.API_V1_PREFIX)
+app.include_router(document_routes.router, prefix=settings.API_V1_PREFIX)

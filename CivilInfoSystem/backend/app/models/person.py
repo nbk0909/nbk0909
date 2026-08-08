@@ -186,12 +186,16 @@ class Address(Base, UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, AuditM
         CheckConstraint(
             "valid_to IS NULL OR valid_to >= valid_from", name="address_period"
         ),
-        # عنوان حالي واحد فقط لكل شخص — فهرس جزئي يُفرض في PostgreSQL
+        # عنوان حالي واحد فقط لكل شخص.
+        # الشرط يُذكر للمحرّكَين معاً: بدون sqlite_where يصير الفهرس في
+        # SQLite قيد تفرّد غير مشروط على person_id، فيمنع الشخص من امتلاك
+        # أكثر من عنوان أصلاً ويُبطل سجل التنقّلات.
         Index(
             "uq_address_current",
             "person_id",
             unique=True,
             postgresql_where=text("is_current AND deleted_at IS NULL"),
+            sqlite_where=text("is_current = 1 AND deleted_at IS NULL"),
         ),
     )
 

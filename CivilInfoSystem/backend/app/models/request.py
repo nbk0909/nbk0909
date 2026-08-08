@@ -67,8 +67,10 @@ class ServiceRequest(Base, UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin)
     decision_by: Mapped[uuid.UUID | None] = mapped_column(GUID(), ForeignKey("users.id"))
     rejection_reason: Mapped[str | None] = mapped_column(Text)
 
+    # القيمة الافتراضية Decimal لا int: القيمة الابتدائية تُسلسَل قبل أن
+    # تمرّ على قاعدة البيانات، فيختلف نوعها عن نوع العمود بلا هذا التصريح
     fee_amount: Mapped[Decimal] = mapped_column(
-        Numeric(12, 2), nullable=False, default=0
+        Numeric(12, 2), nullable=False, default=Decimal("0")
     )
     fee_paid: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
