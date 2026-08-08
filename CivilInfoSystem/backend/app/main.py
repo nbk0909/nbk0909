@@ -14,9 +14,13 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 from sqlalchemy.exc import SQLAlchemyError
 
+from app.api.v1 import auth as auth_routes
 from app.config import settings
+from app.core.rate_limit import limiter, rate_limit_handler
 from app.database import (
     check_arabic_search_support,
     check_connection,
@@ -70,6 +74,11 @@ app = FastAPI(
 # -----------------------------------------------------------------------------
 # الوسائط (Middleware)
 # -----------------------------------------------------------------------------
+
+# محدِّد معدّل الطلبات — يجب ربطه بحالة التطبيق ليعمل المُزيِّن @limiter.limit
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, rate_limit_handler)
+app.add_middleware(SlowAPIMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -167,8 +176,11 @@ async def root() -> dict:
 
 
 # -----------------------------------------------------------------------------
-# مسارات الإصدار الأول — تُضاف في المرحلة الرابعة
+# مسارات الإصدار الأول
 # -----------------------------------------------------------------------------
-# from app.api.v1 import auth, persons, births, deaths, marriages, documents
-# app.include_router(auth.router,      prefix=settings.API_V1_PREFIX)
+
+app.include_router(auth_routes.router, prefix=settings.API_V1_PREFIX)
+
+# تُضاف في المرحلة الرابعة:
 # app.include_router(persons.router,   prefix=settings.API_V1_PREFIX)
+# app.include_router(births.router,    prefix=settings.API_V1_PREFIX)

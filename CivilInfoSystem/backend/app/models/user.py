@@ -22,6 +22,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 from app.models.base import SoftDeleteMixin, TimestampMixin, UUIDPrimaryKeyMixin
 from app.models.types import GUID, IPAddress
+from app.utils.dates import ensure_utc, is_future
 
 # ---------------------------------------------------------------------------
 # جداول الربط
@@ -141,6 +142,18 @@ class User(Base, UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin):
     password_changed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+    # جيل الرموز: يُزاد عند كل إبطال (تغيير كلمة المرور، إنهاء كل
+    # الجلسات)، ويحمل كل رمز وصول رقم الجيل الذي صدر فيه. الرمز الذي لا
+    # يطابق رقمه الجيل الحالي يُرفض.
+    #
+    # لماذا عدّاد لا طابع زمني؟ لأن حقل iat في JWT عدد صحيح من الثواني،
+    # فلا يميّز رمزاً صدر قبل الإبطال بجزء من الثانية عن آخر صدر بعده.
+    # أي مقارنة زمنية إمّا تترك نافذة يعيش فيها رمز مسروق، أو تُبطل الرمز
+    # الجديد الذي حصل عليه المستخدم للتوّ. المقارنة بعدد صحيح لا تحتمل
+    # هذا الالتباس أصلاً.
+    token_generation: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
 
     created_by: Mapped[uuid.UUID | None] = mapped_column(GUID(), ForeignKey("users.id"))
     updated_by: Mapped[uuid.UUID | None] = mapped_column(GUID(), ForeignKey("users.id"))
@@ -161,9 +174,7 @@ class User(Base, UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin):
     @property
     def is_locked(self) -> bool:
         """هل الحساب مقفل حالياً بسبب محاولات دخول فاشلة؟"""
-        if self.locked_until is None:
-            return False
-        return self.locked_until > datetime.now(self.locked_until.tzinfo)
+        return is_future(self.locked_until)
 
     def has_permission(self, permission_code: str) -> bool:
         """يتحقق من امتلاك المستخدم صلاحية معيّنة عبر أي من أدواره."""
@@ -201,6 +212,7 @@ class RefreshToken(Base, UUIDPrimaryKeyMixin):
 
     @property
     def is_valid(self) -> bool:
+        """هل الرمز صالح للاستعمال الآن؟"""
         if self.revoked_at is not None:
             return False
-        return self.expires_at > datetime.now(self.expires_at.tzinfo)
+        return is_future(self.expires_at)

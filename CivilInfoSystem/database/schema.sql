@@ -122,6 +122,7 @@ CREATE TABLE users (
 	locked_until TIMESTAMP WITH TIME ZONE, 
 	last_login_at TIMESTAMP WITH TIME ZONE, 
 	password_changed_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+	token_generation INTEGER DEFAULT '0' NOT NULL, 
 	created_by UUID, 
 	updated_by UUID, 
 	id UUID NOT NULL, 

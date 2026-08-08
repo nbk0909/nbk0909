@@ -41,15 +41,19 @@ class GUID(TypeDecorator):
 
 
 class JSONType(TypeDecorator):
-    """بيانات JSON: JSONB في PostgreSQL (مفهرس وسريع)، وJSON نصّي في SQLite."""
+    """بيانات JSON: JSONB في PostgreSQL (مفهرس وسريع)، وJSON نصّي في SQLite.
+
+    none_as_null يجعل القيمة None تُخزَّن NULL حقيقياً لا قيمة JSON نصّية
+    ('null')، وإلا فشلت استعلامات ‎IS NULL‎ على الأعمدة الفارغة.
+    """
 
     impl = JSON
     cache_ok = True
 
     def load_dialect_impl(self, dialect):
         if dialect.name == "postgresql":
-            return dialect.type_descriptor(JSONB())
-        return dialect.type_descriptor(JSON())
+            return dialect.type_descriptor(JSONB(none_as_null=True))
+        return dialect.type_descriptor(JSON(none_as_null=True))
 
 
 class IPAddress(TypeDecorator):

@@ -9,7 +9,6 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Generator
-from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import Engine, MetaData, create_engine, event
@@ -127,11 +126,6 @@ def get_db() -> Generator[Session, None, None]:
         raise
     finally:
         db.close()
-
-
-def utcnow() -> datetime:
-    """الوقت الحالي بتوقيت UTC مع منطقة زمنية صريحة."""
-    return datetime.now(timezone.utc)
 
 
 def check_connection() -> bool:

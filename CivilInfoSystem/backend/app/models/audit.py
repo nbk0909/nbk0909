@@ -10,7 +10,17 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, String, Text, func
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -28,7 +38,14 @@ class AuditLog(Base):
         Index("idx_audit_created", "created_at"),
     )
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    # SQLite لا يولّد قيماً تلقائية إلا لعمود INTEGER PRIMARY KEY تحديداً،
+    # فالنوع BIGINT يبقى فارغاً ويفشل الإدراج. البديل يعطي BIGSERIAL في
+    # PostgreSQL و INTEGER في SQLite.
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        primary_key=True,
+        autoincrement=True,
+    )
 
     user_id: Mapped[uuid.UUID | None] = mapped_column(
         GUID(), ForeignKey("users.id"), index=True
