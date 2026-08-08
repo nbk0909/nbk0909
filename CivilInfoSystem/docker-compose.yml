@@ -12,14 +12,19 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-civil_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?يجب ضبط POSTGRES_PASSWORD في ملف .env}
       POSTGRES_DB: ${POSTGRES_DB:-civil_db}
-      # ترتيب وفرز مناسب للنصوص العربية
-      LANG: ar_IQ.utf8
-      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
+      # ⚠️  اللغة (Locale) ليست تفصيلاً تجميلياً هنا:
+      #     امتداد pg_trgm يعتمد على تصنيف الحروف في لغة قاعدة البيانات،
+      #     وفي لغة C يُعامَل كل حرف عربي كرمز غير أبجدي، فيولّد الامتداد
+      #     صفر ثلاثيات للنص العربي ويُرجع البحث التقريبي لا شيء بصمت.
+      #     لا تغيّر هذه القيمة إلى C أو POSIX.
+      LANG: C.UTF-8
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C.UTF-8"
     volumes:
       - db_data:/var/lib/postgresql/data
-      # يُنفَّذ مخطط قاعدة البيانات تلقائياً عند أول إقلاع فقط
+      # يُنفَّذ مخطط قاعدة البيانات تلقائياً عند أول إقلاع فقط.
+      # البيانات التجريبية تُضاف بعد الإقلاع بالأمر:
+      #     docker compose exec api python -m scripts.seed
       - ./database/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
-      - ./database/seed_data.sql:/docker-entrypoint-initdb.d/02_seed.sql:ro
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     healthcheck:

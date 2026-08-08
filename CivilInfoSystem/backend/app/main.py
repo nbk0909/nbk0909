@@ -17,7 +17,11 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.config import settings
-from app.database import check_connection, mask_database_url
+from app.database import (
+    check_arabic_search_support,
+    check_connection,
+    mask_database_url,
+)
 
 logging.basicConfig(
     level=logging.DEBUG if settings.DEBUG else logging.INFO,
@@ -37,6 +41,13 @@ async def lifespan(_app: FastAPI):
         logger.error("تعذّر الاتصال بقاعدة البيانات — تحقق من DATABASE_URL")
     else:
         logger.info("تم الاتصال بقاعدة البيانات بنجاح")
+
+        # عطل صامت لو لم يُفحص: البحث عن الأسماء العربية يُرجع لا شيء
+        arabic_ok, arabic_msg = check_arabic_search_support()
+        if arabic_ok:
+            logger.info("البحث العربي: %s", arabic_msg)
+        else:
+            logger.warning("⚠️  %s", arabic_msg)
 
     yield
 
@@ -136,9 +147,12 @@ async def database_exception_handler(_request: Request, exc: SQLAlchemyError):
 async def health_check() -> dict:
     """يتحقق من أن التطبيق وقاعدة البيانات يعملان."""
     db_ok = check_connection()
+    arabic_ok, arabic_msg = check_arabic_search_support() if db_ok else (False, "—")
+
     return {
-        "الحالة": "سليم" if db_ok else "خلل",
+        "الحالة": "سليم" if db_ok and arabic_ok else "خلل",
         "قاعدة_البيانات": "متصلة" if db_ok else "غير متصلة",
+        "البحث_العربي": arabic_msg,
         "الإصدار": settings.APP_VERSION,
     }
 

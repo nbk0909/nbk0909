@@ -19,7 +19,7 @@ pydantic-settings==2.7.0
 email-validator==2.2.0
 
 # --- الأمان والمصادقة ---
-passlib[bcrypt]==1.7.4
+# ملاحظة: لا نستخدم passlib — آخر إصدار لها 2020 وهي غير متوافقة مع bcrypt 4.x
 bcrypt==4.2.1
 pyjwt==2.10.1
 cryptography==44.0.0            # تشفير الحقول الحسّاسة

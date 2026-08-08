@@ -3,41 +3,580 @@
 --  Civil Information System — Database Schema
 --  المحرّك المستهدف: PostgreSQL 15+
 -- =============================================================================
---  ملاحظات عامة:
---    * الحذف في هذا النظام حذف منطقي (Soft Delete) عبر العمود deleted_at.
+--
+--  ⚠️  هذا الملف مُولَّد آلياً — لا تعدّله يدوياً.
+--      لتغيير بنية الجداول: عدّل النماذج في backend/app/models/
+--      لتغيير الدوال والمُشغّلات والعروض: عدّل database/sql_objects.sql
+--      ثم أعد التوليد:  cd backend && python -m scripts.generate_schema
+--
+-- =============================================================================
+--  ملاحظات:
+--    * الحذف حذف منطقي (Soft Delete) عبر العمود deleted_at.
 --      لا تُحذف أي سجلات مدنية حذفاً فعلياً إطلاقاً.
---    * كل جدول يحمل أعمدة تدقيق: created_at, updated_at, created_by, updated_by.
 --    * الحقول النصية العربية تُخزَّن مرتين: القيمة الأصلية + قيمة مُطبَّعة
---      (بلاحقة _normalized) تُستخدم في البحث لتجاهل التشكيل وصور الألف والياء.
+--      (full_name_normalized) تُستخدم في البحث لتجاهل التشكيل وصور الألف.
 -- =============================================================================
 
 BEGIN;
 
 -- الامتدادات المطلوبة
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";   -- توليد المعرّفات الفريدة
-CREATE EXTENSION IF NOT EXISTS "pg_trgm";     -- البحث التقريبي (Fuzzy) في الأسماء
+CREATE EXTENSION IF NOT EXISTS "pg_trgm";     -- البحث التقريبي في الأسماء
 CREATE EXTENSION IF NOT EXISTS "unaccent";
 
+-- ---------------------------------------------------------------------------
+--  الأنواع المعدودة
+-- ---------------------------------------------------------------------------
+
+CREATE TYPE gender_enum AS ENUM ('ذكر', 'أنثى');
+CREATE TYPE life_status_enum AS ENUM ('حي', 'متوفى', 'مفقود');
+CREATE TYPE marital_status_enum AS ENUM ('أعزب', 'متزوج', 'مطلق', 'أرمل');
+CREATE TYPE blood_type_enum AS ENUM ('A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-');
+CREATE TYPE relation_type_enum AS ENUM ('أب', 'أم', 'ابن', 'ابنة', 'زوج', 'زوجة', 'أخ', 'أخت');
+CREATE TYPE document_type_enum AS ENUM ('بطاقة وطنية', 'جواز سفر', 'شهادة جنسية', 'بطاقة عائلية');
+CREATE TYPE document_status_enum AS ENUM ('سارية', 'منتهية', 'مفقودة', 'بدل فاقد', 'ملغاة');
+CREATE TYPE request_type_enum AS ENUM ('إصدار', 'تعديل', 'بدل ضائع', 'تجديد', 'إلغاء');
+CREATE TYPE request_status_enum AS ENUM ('مقدَّم', 'قيد المراجعة', 'مقبول', 'مرفوض', 'ملغى');
+CREATE TYPE audit_action_enum AS ENUM ('إنشاء', 'قراءة', 'تعديل', 'حذف', 'اعتماد', 'دخول', 'خروج', 'محاولة فاشلة');
+
+-- ---------------------------------------------------------------------------
+--  الجداول والفهارس
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE governorates (
+	id SERIAL NOT NULL, 
+	code VARCHAR(10) NOT NULL, 
+	name_ar VARCHAR(100) NOT NULL, 
+	name_en VARCHAR(100), 
+	created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+	updated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+	deleted_at TIMESTAMP WITH TIME ZONE, 
+	CONSTRAINT pk_governorates PRIMARY KEY (id), 
+	CONSTRAINT uq_governorates_code UNIQUE (code), 
+	CONSTRAINT uq_governorates_name_ar UNIQUE (name_ar)
+);
+CREATE INDEX ix_governorates_deleted_at ON governorates (deleted_at);
+
+CREATE TABLE permissions (
+	id SERIAL NOT NULL, 
+	code VARCHAR(100) NOT NULL, 
+	resource VARCHAR(50) NOT NULL, 
+	action VARCHAR(30) NOT NULL, 
+	name_ar VARCHAR(150) NOT NULL, 
+	created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+	CONSTRAINT pk_permissions PRIMARY KEY (id), 
+	CONSTRAINT uq_permissions_code UNIQUE (code)
+);
+
+CREATE TABLE roles (
+	id SERIAL NOT NULL, 
+	code VARCHAR(50) NOT NULL, 
+	name_ar VARCHAR(100) NOT NULL, 
+	description_ar VARCHAR(500), 
+	is_system BOOLEAN NOT NULL, 
+	created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+	updated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+	deleted_at TIMESTAMP WITH TIME ZONE, 
+	CONSTRAINT pk_roles PRIMARY KEY (id), 
+	CONSTRAINT uq_roles_code UNIQUE (code)
+);
+CREATE INDEX ix_roles_deleted_at ON roles (deleted_at);
+
+CREATE TABLE districts (
+	id SERIAL NOT NULL, 
+	governorate_id INTEGER NOT NULL, 
+	code VARCHAR(10) NOT NULL, 
+	name_ar VARCHAR(100) NOT NULL, 
+	name_en VARCHAR(100), 
+	created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+	updated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+	deleted_at TIMESTAMP WITH TIME ZONE, 
+	CONSTRAINT pk_districts PRIMARY KEY (id), 
+	CONSTRAINT uq_district_code UNIQUE (governorate_id, code), 
+	CONSTRAINT fk_districts_governorate_id_governorates FOREIGN KEY(governorate_id) REFERENCES governorates (id) ON DELETE RESTRICT
+);
+CREATE INDEX ix_districts_deleted_at ON districts (deleted_at);
+CREATE INDEX ix_districts_governorate_id ON districts (governorate_id);
+
+CREATE TABLE role_permissions (
+	role_id INTEGER NOT NULL, 
+	permission_id INTEGER NOT NULL, 
+	granted_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+	CONSTRAINT pk_role_permissions PRIMARY KEY (role_id, permission_id), 
+	CONSTRAINT fk_role_permissions_role_id_roles FOREIGN KEY(role_id) REFERENCES roles (id) ON DELETE CASCADE, 
+	CONSTRAINT fk_role_permissions_permission_id_permissions FOREIGN KEY(permission_id) REFERENCES permissions (id) ON DELETE CASCADE
+);
+
+CREATE TABLE users (
+	username VARCHAR(50) NOT NULL, 
+	email VARCHAR(150), 
+	password_hash VARCHAR(255) NOT NULL, 
+	full_name_ar VARCHAR(200) NOT NULL, 
+	phone VARCHAR(20), 
+	governorate_id INTEGER, 
+	is_active BOOLEAN NOT NULL, 
+	must_change_password BOOLEAN NOT NULL, 
+	totp_secret_encrypted VARCHAR(500), 
+	totp_enabled BOOLEAN NOT NULL, 
+	failed_login_attempts SMALLINT NOT NULL, 
+	locked_until TIMESTAMP WITH TIME ZONE, 
+	last_login_at TIMESTAMP WITH TIME ZONE, 
+	password_changed_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+	created_by UUID, 
+	updated_by UUID, 
+	id UUID NOT NULL, 
+	created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+	updated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+	deleted_at TIMESTAMP WITH TIME ZONE, 
+	CONSTRAINT pk_users PRIMARY KEY (id), 
+	CONSTRAINT ck_users_failed_attempts CHECK (failed_login_attempts >= 0), 
+	CONSTRAINT uq_users_username UNIQUE (username), 
+	CONSTRAINT uq_users_email UNIQUE (email), 
+	CONSTRAINT fk_users_governorate_id_governorates FOREIGN KEY(governorate_id) REFERENCES governorates (id), 
+	CONSTRAINT fk_users_created_by_users FOREIGN KEY(created_by) REFERENCES users (id), 
+	CONSTRAINT fk_users_updated_by_users FOREIGN KEY(updated_by) REFERENCES users (id)
+);
+CREATE INDEX ix_users_deleted_at ON users (deleted_at);
+
+CREATE TABLE audit_log (
+	id BIGSERIAL NOT NULL, 
+	user_id UUID, 
+	username VARCHAR(50), 
+	action audit_action_enum NOT NULL, 
+	resource_type VARCHAR(50) NOT NULL, 
+	resource_id VARCHAR(50), 
+	old_values JSONB, 
+	new_values JSONB, 
+	ip_address INET, 
+	user_agent VARCHAR(300), 
+	request_path VARCHAR(300), 
+	succeeded BOOLEAN NOT NULL, 
+	error_message TEXT, 
+	created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+	CONSTRAINT pk_audit_log PRIMARY KEY (id), 
+	CONSTRAINT fk_audit_log_user_id_users FOREIGN KEY(user_id) REFERENCES users (id)
+);
+CREATE INDEX idx_audit_created ON audit_log (created_at);
+CREATE INDEX idx_audit_resource ON audit_log (resource_type, resource_id);
+CREATE INDEX ix_audit_log_action ON audit_log (action);
+CREATE INDEX ix_audit_log_user_id ON audit_log (user_id);
+
+CREATE TABLE persons (
+	national_id VARCHAR(12) NOT NULL, 
+	first_name VARCHAR(50) NOT NULL, 
+	father_name VARCHAR(50) NOT NULL, 
+	grandfather_name VARCHAR(50) NOT NULL, 
+	family_name VARCHAR(50) NOT NULL, 
+	mother_full_name VARCHAR(150) NOT NULL, 
+	full_name_normalized VARCHAR(300), 
+	birth_date DATE NOT NULL, 
+	birth_date_hijri VARCHAR(12), 
+	birth_governorate_id INTEGER, 
+	birth_place_detail VARCHAR(200), 
+	gender gender_enum NOT NULL, 
+	nationality VARCHAR(60) NOT NULL, 
+	religion VARCHAR(50), 
+	blood_type blood_type_enum, 
+	marital_status marital_status_enum NOT NULL, 
+	occupation VARCHAR(100), 
+	education_level VARCHAR(100), 
+	life_status life_status_enum NOT NULL, 
+	photo_path VARCHAR(300), 
+	fingerprint_path VARCHAR(300), 
+	notes TEXT, 
+	id UUID NOT NULL, 
+	created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+	updated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+	deleted_at TIMESTAMP WITH TIME ZONE, 
+	created_by UUID, 
+	updated_by UUID, 
+	CONSTRAINT pk_persons PRIMARY KEY (id), 
+	CONSTRAINT ck_persons_national_id_length CHECK (length(national_id) = 12), 
+	CONSTRAINT fk_persons_birth_governorate_id_governorates FOREIGN KEY(birth_governorate_id) REFERENCES governorates (id), 
+	CONSTRAINT fk_persons_created_by_users FOREIGN KEY(created_by) REFERENCES users (id), 
+	CONSTRAINT fk_persons_updated_by_users FOREIGN KEY(updated_by) REFERENCES users (id)
+);
+CREATE INDEX ix_persons_birth_date ON persons (birth_date);
+CREATE INDEX ix_persons_deleted_at ON persons (deleted_at);
+CREATE INDEX ix_persons_full_name_normalized ON persons (full_name_normalized);
+CREATE INDEX ix_persons_life_status ON persons (life_status);
+CREATE INDEX ix_persons_name_trgm ON persons USING gin (full_name_normalized gin_trgm_ops);
+CREATE UNIQUE INDEX ix_persons_national_id ON persons (national_id);
+
+CREATE TABLE refresh_tokens (
+	user_id UUID NOT NULL, 
+	token_hash VARCHAR(255) NOT NULL, 
+	expires_at TIMESTAMP WITH TIME ZONE NOT NULL, 
+	revoked_at TIMESTAMP WITH TIME ZONE, 
+	user_agent VARCHAR(300), 
+	ip_address INET, 
+	created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+	id UUID NOT NULL, 
+	CONSTRAINT pk_refresh_tokens PRIMARY KEY (id), 
+	CONSTRAINT fk_refresh_tokens_user_id_users FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE, 
+	CONSTRAINT uq_refresh_tokens_token_hash UNIQUE (token_hash)
+);
+CREATE INDEX ix_refresh_tokens_expires_at ON refresh_tokens (expires_at);
+CREATE INDEX ix_refresh_tokens_user_id ON refresh_tokens (user_id);
+
+CREATE TABLE subdistricts (
+	id SERIAL NOT NULL, 
+	district_id INTEGER NOT NULL, 
+	code VARCHAR(10) NOT NULL, 
+	name_ar VARCHAR(100) NOT NULL, 
+	created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+	updated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+	deleted_at TIMESTAMP WITH TIME ZONE, 
+	CONSTRAINT pk_subdistricts PRIMARY KEY (id), 
+	CONSTRAINT uq_subdistrict_code UNIQUE (district_id, code), 
+	CONSTRAINT fk_subdistricts_district_id_districts FOREIGN KEY(district_id) REFERENCES districts (id) ON DELETE RESTRICT
+);
+CREATE INDEX ix_subdistricts_deleted_at ON subdistricts (deleted_at);
+CREATE INDEX ix_subdistricts_district_id ON subdistricts (district_id);
+
+CREATE TABLE user_roles (
+	user_id UUID NOT NULL, 
+	role_id INTEGER NOT NULL, 
+	assigned_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+	assigned_by UUID, 
+	CONSTRAINT pk_user_roles PRIMARY KEY (user_id, role_id), 
+	CONSTRAINT fk_user_roles_user_id_users FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE, 
+	CONSTRAINT fk_user_roles_role_id_roles FOREIGN KEY(role_id) REFERENCES roles (id) ON DELETE RESTRICT, 
+	CONSTRAINT fk_user_roles_assigned_by_users FOREIGN KEY(assigned_by) REFERENCES users (id)
+);
+
+CREATE TABLE addresses (
+	person_id UUID NOT NULL, 
+	governorate_id INTEGER NOT NULL, 
+	district_id INTEGER, 
+	subdistrict_id INTEGER, 
+	quarter VARCHAR(100), 
+	street VARCHAR(100), 
+	house_number VARCHAR(20), 
+	postal_code VARCHAR(10), 
+	details TEXT, 
+	valid_from DATE NOT NULL, 
+	valid_to DATE, 
+	is_current BOOLEAN NOT NULL, 
+	id UUID NOT NULL, 
+	created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+	updated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+	deleted_at TIMESTAMP WITH TIME ZONE, 
+	created_by UUID, 
+	updated_by UUID, 
+	CONSTRAINT pk_addresses PRIMARY KEY (id), 
+	CONSTRAINT ck_addresses_address_period CHECK (valid_to IS NULL OR valid_to >= valid_from), 
+	CONSTRAINT fk_addresses_person_id_persons FOREIGN KEY(person_id) REFERENCES persons (id) ON DELETE RESTRICT, 
+	CONSTRAINT fk_addresses_governorate_id_governorates FOREIGN KEY(governorate_id) REFERENCES governorates (id), 
+	CONSTRAINT fk_addresses_district_id_districts FOREIGN KEY(district_id) REFERENCES districts (id), 
+	CONSTRAINT fk_addresses_subdistrict_id_subdistricts FOREIGN KEY(subdistrict_id) REFERENCES subdistricts (id), 
+	CONSTRAINT fk_addresses_created_by_users FOREIGN KEY(created_by) REFERENCES users (id), 
+	CONSTRAINT fk_addresses_updated_by_users FOREIGN KEY(updated_by) REFERENCES users (id)
+);
+CREATE INDEX ix_addresses_deleted_at ON addresses (deleted_at);
+CREATE INDEX ix_addresses_governorate_id ON addresses (governorate_id);
+CREATE INDEX ix_addresses_person_id ON addresses (person_id);
+CREATE UNIQUE INDEX uq_address_current ON addresses (person_id) WHERE is_current AND deleted_at IS NULL;
+
+CREATE TABLE birth_records (
+	record_number VARCHAR(20) NOT NULL, 
+	person_id UUID NOT NULL, 
+	father_id UUID, 
+	mother_id UUID, 
+	birth_date DATE NOT NULL, 
+	birth_time TIME WITHOUT TIME ZONE, 
+	hospital_name VARCHAR(200), 
+	governorate_id INTEGER NOT NULL, 
+	birth_weight_grams INTEGER, 
+	delivery_type VARCHAR(50), 
+	attending_physician VARCHAR(150), 
+	informant_name VARCHAR(200), 
+	informant_relation VARCHAR(50), 
+	registration_date DATE NOT NULL, 
+	registration_office VARCHAR(150), 
+	certificate_issued BOOLEAN NOT NULL, 
+	id UUID NOT NULL, 
+	created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+	updated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+	deleted_at TIMESTAMP WITH TIME ZONE, 
+	created_by UUID, 
+	updated_by UUID, 
+	CONSTRAINT pk_birth_records PRIMARY KEY (id), 
+	CONSTRAINT ck_birth_records_birth_weight CHECK (birth_weight_grams IS NULL OR (birth_weight_grams >= 200 AND birth_weight_grams <= 8000)), 
+	CONSTRAINT ck_birth_records_birth_reg CHECK (registration_date >= birth_date), 
+	CONSTRAINT ck_birth_records_parents_differ CHECK (father_id IS NULL OR mother_id IS NULL OR father_id <> mother_id), 
+	CONSTRAINT uq_birth_records_record_number UNIQUE (record_number), 
+	CONSTRAINT uq_birth_records_person_id UNIQUE (person_id), 
+	CONSTRAINT fk_birth_records_person_id_persons FOREIGN KEY(person_id) REFERENCES persons (id) ON DELETE RESTRICT, 
+	CONSTRAINT fk_birth_records_father_id_persons FOREIGN KEY(father_id) REFERENCES persons (id), 
+	CONSTRAINT fk_birth_records_mother_id_persons FOREIGN KEY(mother_id) REFERENCES persons (id), 
+	CONSTRAINT fk_birth_records_governorate_id_governorates FOREIGN KEY(governorate_id) REFERENCES governorates (id), 
+	CONSTRAINT fk_birth_records_created_by_users FOREIGN KEY(created_by) REFERENCES users (id), 
+	CONSTRAINT fk_birth_records_updated_by_users FOREIGN KEY(updated_by) REFERENCES users (id)
+);
+CREATE INDEX ix_birth_records_birth_date ON birth_records (birth_date);
+CREATE INDEX ix_birth_records_deleted_at ON birth_records (deleted_at);
+CREATE INDEX ix_birth_records_father_id ON birth_records (father_id);
+CREATE INDEX ix_birth_records_governorate_id ON birth_records (governorate_id);
+CREATE INDEX ix_birth_records_mother_id ON birth_records (mother_id);
+
+CREATE TABLE death_records (
+	record_number VARCHAR(20) NOT NULL, 
+	person_id UUID NOT NULL, 
+	death_date DATE NOT NULL, 
+	death_time TIME WITHOUT TIME ZONE, 
+	death_place VARCHAR(200), 
+	governorate_id INTEGER NOT NULL, 
+	cause_of_death VARCHAR(300), 
+	cause_category VARCHAR(100), 
+	reporting_authority VARCHAR(200), 
+	certifying_physician VARCHAR(150), 
+	burial_place VARCHAR(200), 
+	registration_date DATE NOT NULL, 
+	certificate_issued BOOLEAN NOT NULL, 
+	id UUID NOT NULL, 
+	created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+	updated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+	deleted_at TIMESTAMP WITH TIME ZONE, 
+	created_by UUID, 
+	updated_by UUID, 
+	CONSTRAINT pk_death_records PRIMARY KEY (id), 
+	CONSTRAINT ck_death_records_death_reg CHECK (registration_date >= death_date), 
+	CONSTRAINT uq_death_records_record_number UNIQUE (record_number), 
+	CONSTRAINT uq_death_records_person_id UNIQUE (person_id), 
+	CONSTRAINT fk_death_records_person_id_persons FOREIGN KEY(person_id) REFERENCES persons (id) ON DELETE RESTRICT, 
+	CONSTRAINT fk_death_records_governorate_id_governorates FOREIGN KEY(governorate_id) REFERENCES governorates (id), 
+	CONSTRAINT fk_death_records_created_by_users FOREIGN KEY(created_by) REFERENCES users (id), 
+	CONSTRAINT fk_death_records_updated_by_users FOREIGN KEY(updated_by) REFERENCES users (id)
+);
+CREATE INDEX ix_death_records_death_date ON death_records (death_date);
+CREATE INDEX ix_death_records_deleted_at ON death_records (deleted_at);
+CREATE INDEX ix_death_records_governorate_id ON death_records (governorate_id);
+
+CREATE TABLE documents (
+	person_id UUID NOT NULL, 
+	document_type document_type_enum NOT NULL, 
+	document_number VARCHAR(30) NOT NULL, 
+	issue_date DATE NOT NULL, 
+	expiry_date DATE, 
+	issuing_authority VARCHAR(200) NOT NULL, 
+	issuing_governorate_id INTEGER, 
+	status document_status_enum NOT NULL, 
+	replaces_document_id UUID, 
+	scan_path VARCHAR(300), 
+	notes TEXT, 
+	id UUID NOT NULL, 
+	created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+	updated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+	deleted_at TIMESTAMP WITH TIME ZONE, 
+	created_by UUID, 
+	updated_by UUID, 
+	CONSTRAINT pk_documents PRIMARY KEY (id), 
+	CONSTRAINT uq_document UNIQUE (document_type, document_number), 
+	CONSTRAINT ck_documents_document_dates CHECK (expiry_date IS NULL OR expiry_date > issue_date), 
+	CONSTRAINT fk_documents_person_id_persons FOREIGN KEY(person_id) REFERENCES persons (id) ON DELETE RESTRICT, 
+	CONSTRAINT fk_documents_issuing_governorate_id_governorates FOREIGN KEY(issuing_governorate_id) REFERENCES governorates (id), 
+	CONSTRAINT fk_documents_replaces_document_id_documents FOREIGN KEY(replaces_document_id) REFERENCES documents (id), 
+	CONSTRAINT fk_documents_created_by_users FOREIGN KEY(created_by) REFERENCES users (id), 
+	CONSTRAINT fk_documents_updated_by_users FOREIGN KEY(updated_by) REFERENCES users (id)
+);
+CREATE INDEX ix_documents_deleted_at ON documents (deleted_at);
+CREATE INDEX ix_documents_document_number ON documents (document_number);
+CREATE INDEX ix_documents_expiry_date ON documents (expiry_date);
+CREATE INDEX ix_documents_person_id ON documents (person_id);
+CREATE UNIQUE INDEX uq_active_document_per_type ON documents (person_id, document_type) WHERE status = 'سارية' AND deleted_at IS NULL;
+
+CREATE TABLE family_cards (
+	card_number VARCHAR(20) NOT NULL, 
+	head_person_id UUID NOT NULL, 
+	governorate_id INTEGER NOT NULL, 
+	issue_date DATE NOT NULL, 
+	issuing_office VARCHAR(150), 
+	is_active BOOLEAN NOT NULL, 
+	id UUID NOT NULL, 
+	created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+	updated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+	deleted_at TIMESTAMP WITH TIME ZONE, 
+	created_by UUID, 
+	updated_by UUID, 
+	CONSTRAINT pk_family_cards PRIMARY KEY (id), 
+	CONSTRAINT uq_family_cards_card_number UNIQUE (card_number), 
+	CONSTRAINT fk_family_cards_head_person_id_persons FOREIGN KEY(head_person_id) REFERENCES persons (id) ON DELETE RESTRICT, 
+	CONSTRAINT fk_family_cards_governorate_id_governorates FOREIGN KEY(governorate_id) REFERENCES governorates (id), 
+	CONSTRAINT fk_family_cards_created_by_users FOREIGN KEY(created_by) REFERENCES users (id), 
+	CONSTRAINT fk_family_cards_updated_by_users FOREIGN KEY(updated_by) REFERENCES users (id)
+);
+CREATE INDEX ix_family_cards_deleted_at ON family_cards (deleted_at);
+CREATE INDEX ix_family_cards_head_person_id ON family_cards (head_person_id);
+
+CREATE TABLE family_relations (
+	person_id UUID NOT NULL, 
+	related_person_id UUID NOT NULL, 
+	relation_type relation_type_enum NOT NULL, 
+	start_date DATE, 
+	end_date DATE, 
+	is_active BOOLEAN NOT NULL, 
+	created_by UUID, 
+	id UUID NOT NULL, 
+	created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+	updated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+	deleted_at TIMESTAMP WITH TIME ZONE, 
+	CONSTRAINT pk_family_relations PRIMARY KEY (id), 
+	CONSTRAINT ck_family_relations_no_self_relation CHECK (person_id <> related_person_id), 
+	CONSTRAINT ck_family_relations_relation_period CHECK (end_date IS NULL OR end_date >= start_date), 
+	CONSTRAINT uq_relation UNIQUE (person_id, related_person_id, relation_type), 
+	CONSTRAINT fk_family_relations_person_id_persons FOREIGN KEY(person_id) REFERENCES persons (id) ON DELETE RESTRICT, 
+	CONSTRAINT fk_family_relations_related_person_id_persons FOREIGN KEY(related_person_id) REFERENCES persons (id) ON DELETE RESTRICT, 
+	CONSTRAINT fk_family_relations_created_by_users FOREIGN KEY(created_by) REFERENCES users (id)
+);
+CREATE INDEX ix_family_relations_deleted_at ON family_relations (deleted_at);
+CREATE INDEX ix_family_relations_person_id ON family_relations (person_id);
+CREATE INDEX ix_family_relations_related_person_id ON family_relations (related_person_id);
+
+CREATE TABLE marriage_contracts (
+	contract_number VARCHAR(20) NOT NULL, 
+	husband_id UUID NOT NULL, 
+	wife_id UUID NOT NULL, 
+	contract_date DATE NOT NULL, 
+	contract_date_hijri VARCHAR(12), 
+	governorate_id INTEGER NOT NULL, 
+	court_name VARCHAR(200), 
+	officiant_name VARCHAR(150) NOT NULL, 
+	witness1_name VARCHAR(150) NOT NULL, 
+	witness1_national_id VARCHAR(12), 
+	witness2_name VARCHAR(150) NOT NULL, 
+	witness2_national_id VARCHAR(12), 
+	dowry_prompt NUMERIC(14, 2), 
+	dowry_deferred NUMERIC(14, 2), 
+	currency VARCHAR(10) NOT NULL, 
+	is_active BOOLEAN NOT NULL, 
+	document_issued BOOLEAN NOT NULL, 
+	id UUID NOT NULL, 
+	created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+	updated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+	deleted_at TIMESTAMP WITH TIME ZONE, 
+	created_by UUID, 
+	updated_by UUID, 
+	CONSTRAINT pk_marriage_contracts PRIMARY KEY (id), 
+	CONSTRAINT ck_marriage_contracts_spouses_differ CHECK (husband_id <> wife_id), 
+	CONSTRAINT ck_marriage_contracts_dowry_positive CHECK ((dowry_prompt IS NULL OR dowry_prompt >= 0) AND (dowry_deferred IS NULL OR dowry_deferred >= 0)), 
+	CONSTRAINT uq_marriage_contracts_contract_number UNIQUE (contract_number), 
+	CONSTRAINT fk_marriage_contracts_husband_id_persons FOREIGN KEY(husband_id) REFERENCES persons (id) ON DELETE RESTRICT, 
+	CONSTRAINT fk_marriage_contracts_wife_id_persons FOREIGN KEY(wife_id) REFERENCES persons (id) ON DELETE RESTRICT, 
+	CONSTRAINT fk_marriage_contracts_governorate_id_governorates FOREIGN KEY(governorate_id) REFERENCES governorates (id), 
+	CONSTRAINT fk_marriage_contracts_created_by_users FOREIGN KEY(created_by) REFERENCES users (id), 
+	CONSTRAINT fk_marriage_contracts_updated_by_users FOREIGN KEY(updated_by) REFERENCES users (id)
+);
+CREATE INDEX ix_marriage_contracts_contract_date ON marriage_contracts (contract_date);
+CREATE INDEX ix_marriage_contracts_deleted_at ON marriage_contracts (deleted_at);
+CREATE INDEX ix_marriage_contracts_husband_id ON marriage_contracts (husband_id);
+CREATE INDEX ix_marriage_contracts_wife_id ON marriage_contracts (wife_id);
+
+CREATE TABLE service_requests (
+	reference_number VARCHAR(25) NOT NULL, 
+	person_id UUID NOT NULL, 
+	request_type request_type_enum NOT NULL, 
+	subject VARCHAR(200) NOT NULL, 
+	details TEXT, 
+	status request_status_enum NOT NULL, 
+	submitted_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+	submitted_by UUID, 
+	reviewed_at TIMESTAMP WITH TIME ZONE, 
+	reviewed_by UUID, 
+	decision_at TIMESTAMP WITH TIME ZONE, 
+	decision_by UUID, 
+	rejection_reason TEXT, 
+	fee_amount NUMERIC(12, 2) NOT NULL, 
+	fee_paid BOOLEAN NOT NULL, 
+	id UUID NOT NULL, 
+	created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+	updated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+	deleted_at TIMESTAMP WITH TIME ZONE, 
+	CONSTRAINT pk_service_requests PRIMARY KEY (id), 
+	CONSTRAINT ck_service_requests_fee_positive CHECK (fee_amount >= 0), 
+	CONSTRAINT ck_service_requests_rejection_reason CHECK (status <> 'مرفوض' OR rejection_reason IS NOT NULL), 
+	CONSTRAINT fk_service_requests_person_id_persons FOREIGN KEY(person_id) REFERENCES persons (id) ON DELETE RESTRICT, 
+	CONSTRAINT fk_service_requests_submitted_by_users FOREIGN KEY(submitted_by) REFERENCES users (id), 
+	CONSTRAINT fk_service_requests_reviewed_by_users FOREIGN KEY(reviewed_by) REFERENCES users (id), 
+	CONSTRAINT fk_service_requests_decision_by_users FOREIGN KEY(decision_by) REFERENCES users (id)
+);
+CREATE INDEX ix_service_requests_deleted_at ON service_requests (deleted_at);
+CREATE INDEX ix_service_requests_person_id ON service_requests (person_id);
+CREATE UNIQUE INDEX ix_service_requests_reference_number ON service_requests (reference_number);
+CREATE INDEX ix_service_requests_status ON service_requests (status);
+
+CREATE TABLE divorce_records (
+	record_number VARCHAR(20) NOT NULL, 
+	marriage_id UUID NOT NULL, 
+	divorce_date DATE NOT NULL, 
+	divorce_date_hijri VARCHAR(12), 
+	divorce_type VARCHAR(50), 
+	court_name VARCHAR(200), 
+	judge_name VARCHAR(150), 
+	reason TEXT, 
+	custody_notes TEXT, 
+	document_issued BOOLEAN NOT NULL, 
+	id UUID NOT NULL, 
+	created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+	updated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+	deleted_at TIMESTAMP WITH TIME ZONE, 
+	created_by UUID, 
+	updated_by UUID, 
+	CONSTRAINT pk_divorce_records PRIMARY KEY (id), 
+	CONSTRAINT uq_divorce_records_record_number UNIQUE (record_number), 
+	CONSTRAINT fk_divorce_records_marriage_id_marriage_contracts FOREIGN KEY(marriage_id) REFERENCES marriage_contracts (id) ON DELETE RESTRICT, 
+	CONSTRAINT fk_divorce_records_created_by_users FOREIGN KEY(created_by) REFERENCES users (id), 
+	CONSTRAINT fk_divorce_records_updated_by_users FOREIGN KEY(updated_by) REFERENCES users (id)
+);
+CREATE INDEX ix_divorce_records_deleted_at ON divorce_records (deleted_at);
+CREATE INDEX ix_divorce_records_divorce_date ON divorce_records (divorce_date);
+CREATE INDEX ix_divorce_records_marriage_id ON divorce_records (marriage_id);
+
+CREATE TABLE family_card_members (
+	family_card_id UUID NOT NULL, 
+	person_id UUID NOT NULL, 
+	relation_to_head relation_type_enum NOT NULL, 
+	added_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+	removed_at TIMESTAMP WITH TIME ZONE, 
+	id UUID NOT NULL, 
+	CONSTRAINT pk_family_card_members PRIMARY KEY (id), 
+	CONSTRAINT uq_card_member UNIQUE (family_card_id, person_id), 
+	CONSTRAINT fk_family_card_members_family_card_id_family_cards FOREIGN KEY(family_card_id) REFERENCES family_cards (id) ON DELETE CASCADE, 
+	CONSTRAINT fk_family_card_members_person_id_persons FOREIGN KEY(person_id) REFERENCES persons (id) ON DELETE RESTRICT
+);
+CREATE INDEX ix_family_card_members_family_card_id ON family_card_members (family_card_id);
+CREATE INDEX ix_family_card_members_person_id ON family_card_members (person_id);
+CREATE UNIQUE INDEX uq_person_active_card ON family_card_members (person_id) WHERE removed_at IS NULL;
+
+CREATE TABLE request_attachments (
+	request_id UUID NOT NULL, 
+	file_name VARCHAR(255) NOT NULL, 
+	file_path VARCHAR(300) NOT NULL, 
+	mime_type VARCHAR(100), 
+	file_size_bytes BIGINT, 
+	uploaded_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+	uploaded_by UUID, 
+	id UUID NOT NULL, 
+	CONSTRAINT pk_request_attachments PRIMARY KEY (id), 
+	CONSTRAINT fk_request_attachments_request_id_service_requests FOREIGN KEY(request_id) REFERENCES service_requests (id) ON DELETE CASCADE, 
+	CONSTRAINT fk_request_attachments_uploaded_by_users FOREIGN KEY(uploaded_by) REFERENCES users (id)
+);
+CREATE INDEX ix_request_attachments_request_id ON request_attachments (request_id);
+
 -- =============================================================================
---  0) الأنواع المعدودة (ENUM Types)
+--  الدوال والمُشغّلات والعروض
+-- =============================================================================
+--  هذا الملف يُكتب يدوياً — يحتوي ما لا تستطيع نماذج ORM التعبير عنه.
+--  يُلحق آلياً بنهاية database/schema.sql عند التوليد، فلا تُنفّذه منفرداً.
 -- =============================================================================
 
-CREATE TYPE gender_enum            AS ENUM ('ذكر', 'أنثى');
-CREATE TYPE life_status_enum       AS ENUM ('حي', 'متوفى', 'مفقود');
-CREATE TYPE marital_status_enum    AS ENUM ('أعزب', 'متزوج', 'مطلق', 'أرمل');
-CREATE TYPE blood_type_enum        AS ENUM ('A+','A-','B+','B-','AB+','AB-','O+','O-');
-CREATE TYPE relation_type_enum     AS ENUM ('أب', 'أم', 'ابن', 'ابنة', 'زوج', 'زوجة', 'أخ', 'أخت');
-CREATE TYPE document_type_enum     AS ENUM ('بطاقة وطنية', 'جواز سفر', 'شهادة جنسية', 'بطاقة عائلية');
-CREATE TYPE document_status_enum   AS ENUM ('سارية', 'منتهية', 'مفقودة', 'بدل فاقد', 'ملغاة');
-CREATE TYPE request_type_enum      AS ENUM ('إصدار', 'تعديل', 'بدل ضائع', 'تجديد', 'إلغاء');
-CREATE TYPE request_status_enum    AS ENUM ('مقدَّم', 'قيد المراجعة', 'مقبول', 'مرفوض', 'ملغى');
-CREATE TYPE audit_action_enum      AS ENUM ('إنشاء', 'قراءة', 'تعديل', 'حذف', 'اعتماد', 'دخول', 'خروج', 'محاولة فاشلة');
-
--- =============================================================================
---  1) تطبيع النص العربي — دالة تُستخدم في الفهارس والبحث
--- =============================================================================
---  توحّد صور الألف (أ إ آ ٱ → ا)، والتاء المربوطة (ة → ه)، والألف المقصورة (ى → ي)،
---  والهمزات (ؤ → و ، ئ → ي)، وتحذف التشكيل والتطويل، وتضغط المسافات.
+-- ---------------------------------------------------------------------------
+--  1) تطبيع النص العربي
+-- ---------------------------------------------------------------------------
+--  توحّد صور الألف (أ إ آ ٱ → ا)، والتاء المربوطة (ة → ه)، والألف المقصورة
+--  (ى → ي)، والهمزات (ؤ → و ، ئ → ي)، وتحذف التشكيل والتطويل، وتضغط المسافات.
+--  النسخة نفسها مُنفَّذة في بايثون في app/utils/arabic.py — أي تعديل هنا يجب
+--  أن يقابله تعديل هناك، وإلا اختلفت نتائج البحث بين الطبقتين.
 
 CREATE OR REPLACE FUNCTION normalize_arabic(txt TEXT)
 RETURNS TEXT AS $$
@@ -63,192 +602,11 @@ $$ LANGUAGE plpgsql IMMUTABLE STRICT;
 COMMENT ON FUNCTION normalize_arabic(TEXT) IS
     'تطبيع النص العربي للبحث: توحيد الألف والياء والتاء المربوطة وحذف التشكيل';
 
--- =============================================================================
---  2) التقسيمات الإدارية
--- =============================================================================
 
-CREATE TABLE governorates (
-    id              SERIAL PRIMARY KEY,
-    code            VARCHAR(10)  NOT NULL UNIQUE,
-    name_ar         VARCHAR(100) NOT NULL UNIQUE,
-    name_en         VARCHAR(100),
-    created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    deleted_at      TIMESTAMPTZ
-);
-COMMENT ON TABLE governorates IS 'المحافظات';
+-- ---------------------------------------------------------------------------
+--  2) ملء الاسم المطبَّع تلقائياً عند الإدراج والتعديل
+-- ---------------------------------------------------------------------------
 
-CREATE TABLE districts (
-    id              SERIAL PRIMARY KEY,
-    governorate_id  INTEGER      NOT NULL REFERENCES governorates(id) ON DELETE RESTRICT,
-    code            VARCHAR(10)  NOT NULL,
-    name_ar         VARCHAR(100) NOT NULL,
-    name_en         VARCHAR(100),
-    created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    deleted_at      TIMESTAMPTZ,
-    CONSTRAINT uq_district_code UNIQUE (governorate_id, code)
-);
-COMMENT ON TABLE districts IS 'الأقضية / المناطق';
-
-CREATE TABLE subdistricts (
-    id              SERIAL PRIMARY KEY,
-    district_id     INTEGER      NOT NULL REFERENCES districts(id) ON DELETE RESTRICT,
-    code            VARCHAR(10)  NOT NULL,
-    name_ar         VARCHAR(100) NOT NULL,
-    created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    deleted_at      TIMESTAMPTZ,
-    CONSTRAINT uq_subdistrict_code UNIQUE (district_id, code)
-);
-COMMENT ON TABLE subdistricts IS 'النواحي';
-
-CREATE INDEX idx_districts_gov      ON districts(governorate_id)  WHERE deleted_at IS NULL;
-CREATE INDEX idx_subdistricts_dist  ON subdistricts(district_id)  WHERE deleted_at IS NULL;
-
--- =============================================================================
---  3) المستخدمون والصلاحيات (RBAC)
--- =============================================================================
-
-CREATE TABLE roles (
-    id              SERIAL PRIMARY KEY,
-    code            VARCHAR(50)  NOT NULL UNIQUE,   -- admin, registrar, clerk, auditor, viewer
-    name_ar         VARCHAR(100) NOT NULL,
-    description_ar  TEXT,
-    is_system       BOOLEAN      NOT NULL DEFAULT FALSE,  -- أدوار النظام لا تُحذف
-    created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    deleted_at      TIMESTAMPTZ
-);
-COMMENT ON TABLE roles IS 'الأدوار الوظيفية';
-
-CREATE TABLE permissions (
-    id              SERIAL PRIMARY KEY,
-    code            VARCHAR(100) NOT NULL UNIQUE,   -- مثال: persons.create
-    resource        VARCHAR(50)  NOT NULL,          -- persons
-    action          VARCHAR(30)  NOT NULL,          -- create/read/update/delete/approve
-    name_ar         VARCHAR(150) NOT NULL,
-    created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW()
-);
-COMMENT ON TABLE permissions IS 'الصلاحيات الدقيقة';
-
-CREATE TABLE role_permissions (
-    role_id         INTEGER NOT NULL REFERENCES roles(id)       ON DELETE CASCADE,
-    permission_id   INTEGER NOT NULL REFERENCES permissions(id) ON DELETE CASCADE,
-    granted_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (role_id, permission_id)
-);
-
-CREATE TABLE users (
-    id                      UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    username                VARCHAR(50)  NOT NULL UNIQUE,
-    email                   VARCHAR(150) UNIQUE,
-    password_hash           VARCHAR(255) NOT NULL,
-    full_name_ar            VARCHAR(200) NOT NULL,
-    phone                   VARCHAR(20),
-    governorate_id          INTEGER REFERENCES governorates(id),  -- نطاق عمل الموظف
-
-    is_active               BOOLEAN     NOT NULL DEFAULT TRUE,
-    must_change_password    BOOLEAN     NOT NULL DEFAULT TRUE,
-
-    -- المصادقة الثنائية
-    totp_secret_encrypted   TEXT,
-    totp_enabled            BOOLEAN     NOT NULL DEFAULT FALSE,
-
-    -- حماية من محاولات الدخول المتكررة
-    failed_login_attempts   SMALLINT    NOT NULL DEFAULT 0,
-    locked_until            TIMESTAMPTZ,
-    last_login_at           TIMESTAMPTZ,
-    password_changed_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-
-    created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    deleted_at              TIMESTAMPTZ,
-    created_by              UUID REFERENCES users(id),
-    updated_by              UUID REFERENCES users(id),
-
-    CONSTRAINT ck_failed_attempts CHECK (failed_login_attempts >= 0)
-);
-COMMENT ON TABLE users IS 'مستخدمو النظام';
-
-CREATE TABLE user_roles (
-    user_id     UUID    NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    role_id     INTEGER NOT NULL REFERENCES roles(id) ON DELETE RESTRICT,
-    assigned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    assigned_by UUID REFERENCES users(id),
-    PRIMARY KEY (user_id, role_id)
-);
-
-CREATE TABLE refresh_tokens (
-    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id         UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    token_hash      VARCHAR(255) NOT NULL UNIQUE,
-    expires_at      TIMESTAMPTZ NOT NULL,
-    revoked_at      TIMESTAMPTZ,
-    user_agent      VARCHAR(300),
-    ip_address      INET,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-COMMENT ON TABLE refresh_tokens IS 'رموز التحديث للجلسات';
-
-CREATE INDEX idx_users_active        ON users(username) WHERE deleted_at IS NULL AND is_active;
-CREATE INDEX idx_refresh_user        ON refresh_tokens(user_id) WHERE revoked_at IS NULL;
-CREATE INDEX idx_refresh_expires     ON refresh_tokens(expires_at);
-
--- =============================================================================
---  4) الأشخاص — السجل المدني الأساسي
--- =============================================================================
-
-CREATE TABLE persons (
-    id                      UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-
-    -- الرقم الوطني: 12 رقماً، يُتحقق من صحته في طبقة التطبيق بخوارزمية Luhn المعدّلة
-    national_id             VARCHAR(12)  NOT NULL UNIQUE,
-
-    -- الاسم الرباعي
-    first_name              VARCHAR(50)  NOT NULL,
-    father_name             VARCHAR(50)  NOT NULL,
-    grandfather_name        VARCHAR(50)  NOT NULL,
-    family_name             VARCHAR(50)  NOT NULL,
-    mother_full_name        VARCHAR(150) NOT NULL,
-
-    -- الاسم المُطبَّع للبحث (يُملأ تلقائياً بمُشغّل Trigger)
-    full_name_normalized    VARCHAR(300),
-
-    -- الميلاد
-    birth_date              DATE         NOT NULL,
-    birth_date_hijri        VARCHAR(12),                       -- بصيغة YYYY-MM-DD هجري
-    birth_governorate_id    INTEGER REFERENCES governorates(id),
-    birth_place_detail      VARCHAR(200),
-
-    gender                  gender_enum        NOT NULL,
-    nationality             VARCHAR(60)        NOT NULL DEFAULT 'عراقي',
-    religion                VARCHAR(50),
-    blood_type              blood_type_enum,
-    marital_status          marital_status_enum NOT NULL DEFAULT 'أعزب',
-    occupation              VARCHAR(100),
-    education_level         VARCHAR(100),
-
-    life_status             life_status_enum   NOT NULL DEFAULT 'حي',
-
-    -- المرفقات البيومترية (مسارات تخزين، لا تُخزَّن الملفات في قاعدة البيانات)
-    photo_path              VARCHAR(300),
-    fingerprint_path        VARCHAR(300),
-
-    notes                   TEXT,
-
-    created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    deleted_at              TIMESTAMPTZ,
-    created_by              UUID REFERENCES users(id),
-    updated_by              UUID REFERENCES users(id),
-
-    CONSTRAINT ck_national_id_format CHECK (national_id ~ '^[0-9]{12}$'),
-    CONSTRAINT ck_birth_not_future   CHECK (birth_date <= CURRENT_DATE)
-);
-COMMENT ON TABLE persons IS 'السجل المدني الأساسي للأشخاص';
-
--- مُشغّل يملأ الاسم المطبَّع تلقائياً عند الإدراج أو التعديل
 CREATE OR REPLACE FUNCTION persons_fill_normalized()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -265,196 +623,13 @@ CREATE TRIGGER trg_persons_normalize
     BEFORE INSERT OR UPDATE ON persons
     FOR EACH ROW EXECUTE FUNCTION persons_fill_normalized();
 
--- الفهارس المطلوبة للبحث السريع
-CREATE INDEX idx_persons_national_id   ON persons(national_id)           WHERE deleted_at IS NULL;
-CREATE INDEX idx_persons_name_norm     ON persons(full_name_normalized)  WHERE deleted_at IS NULL;
-CREATE INDEX idx_persons_name_trgm     ON persons USING GIN (full_name_normalized gin_trgm_ops);
-CREATE INDEX idx_persons_birth_date    ON persons(birth_date)            WHERE deleted_at IS NULL;
-CREATE INDEX idx_persons_life_status   ON persons(life_status)           WHERE deleted_at IS NULL;
-CREATE INDEX idx_persons_birth_gov     ON persons(birth_governorate_id)  WHERE deleted_at IS NULL;
 
--- =============================================================================
---  5) العناوين والسكن (مع سجل تاريخي للتنقّلات)
--- =============================================================================
+-- ---------------------------------------------------------------------------
+--  3) قيود منطقية عبر أكثر من جدول
+-- ---------------------------------------------------------------------------
+--  قيود CHECK لا تستطيع قراءة جداول أخرى، فتُفرض هذه القواعد بمُشغّلات.
 
-CREATE TABLE addresses (
-    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    person_id       UUID    NOT NULL REFERENCES persons(id) ON DELETE RESTRICT,
-    governorate_id  INTEGER NOT NULL REFERENCES governorates(id),
-    district_id     INTEGER REFERENCES districts(id),
-    subdistrict_id  INTEGER REFERENCES subdistricts(id),
-    quarter         VARCHAR(100),        -- المحلة
-    street          VARCHAR(100),        -- الزقاق
-    house_number    VARCHAR(20),         -- رقم الدار
-    postal_code     VARCHAR(10),
-    details         TEXT,
-
-    valid_from      DATE    NOT NULL DEFAULT CURRENT_DATE,
-    valid_to        DATE,                -- NULL يعني العنوان الحالي
-    is_current      BOOLEAN NOT NULL DEFAULT TRUE,
-
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    deleted_at      TIMESTAMPTZ,
-    created_by      UUID REFERENCES users(id),
-    updated_by      UUID REFERENCES users(id),
-
-    CONSTRAINT ck_address_period CHECK (valid_to IS NULL OR valid_to >= valid_from)
-);
-COMMENT ON TABLE addresses IS 'عناوين السكن مع السجل التاريخي للتنقّلات';
-
--- عنوان حالي واحد فقط لكل شخص
-CREATE UNIQUE INDEX uq_address_current
-    ON addresses(person_id)
-    WHERE is_current AND deleted_at IS NULL;
-
-CREATE INDEX idx_addresses_person ON addresses(person_id) WHERE deleted_at IS NULL;
-CREATE INDEX idx_addresses_gov    ON addresses(governorate_id) WHERE deleted_at IS NULL;
-
--- =============================================================================
---  6) العلاقات الأُسرية وشجرة العائلة
--- =============================================================================
-
-CREATE TABLE family_relations (
-    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    person_id       UUID NOT NULL REFERENCES persons(id) ON DELETE RESTRICT,
-    related_person_id UUID NOT NULL REFERENCES persons(id) ON DELETE RESTRICT,
-    relation_type   relation_type_enum NOT NULL,   -- علاقة related_person بالنسبة لـ person
-
-    start_date      DATE,
-    end_date        DATE,
-    is_active       BOOLEAN NOT NULL DEFAULT TRUE,
-
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    deleted_at      TIMESTAMPTZ,
-    created_by      UUID REFERENCES users(id),
-
-    -- منع أن يكون الشخص قريباً لنفسه
-    CONSTRAINT ck_no_self_relation CHECK (person_id <> related_person_id),
-    CONSTRAINT ck_relation_period  CHECK (end_date IS NULL OR end_date >= start_date),
-    CONSTRAINT uq_relation UNIQUE (person_id, related_person_id, relation_type)
-);
-COMMENT ON TABLE family_relations IS 'العلاقات الأُسرية — تُخزَّن باتجاهين لتسهيل الاستعلام';
-
-CREATE INDEX idx_relations_person    ON family_relations(person_id)         WHERE deleted_at IS NULL;
-CREATE INDEX idx_relations_related   ON family_relations(related_person_id) WHERE deleted_at IS NULL;
-CREATE INDEX idx_relations_type      ON family_relations(relation_type)     WHERE deleted_at IS NULL;
-
--- =============================================================================
---  7) بطاقة العائلة (دفتر العائلة)
--- =============================================================================
-
-CREATE TABLE family_cards (
-    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    card_number     VARCHAR(20) NOT NULL UNIQUE,
-    head_person_id  UUID        NOT NULL REFERENCES persons(id) ON DELETE RESTRICT,
-    governorate_id  INTEGER     NOT NULL REFERENCES governorates(id),
-    issue_date      DATE        NOT NULL DEFAULT CURRENT_DATE,
-    issuing_office  VARCHAR(150),
-    is_active       BOOLEAN     NOT NULL DEFAULT TRUE,
-
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    deleted_at      TIMESTAMPTZ,
-    created_by      UUID REFERENCES users(id),
-    updated_by      UUID REFERENCES users(id)
-);
-COMMENT ON TABLE family_cards IS 'بطاقات العائلة (دفتر العائلة)';
-
-CREATE TABLE family_card_members (
-    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    family_card_id  UUID NOT NULL REFERENCES family_cards(id) ON DELETE CASCADE,
-    person_id       UUID NOT NULL REFERENCES persons(id)      ON DELETE RESTRICT,
-    relation_to_head relation_type_enum NOT NULL,
-    added_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    removed_at      TIMESTAMPTZ,
-    CONSTRAINT uq_card_member UNIQUE (family_card_id, person_id)
-);
-
--- الشخص لا ينتمي لأكثر من بطاقة عائلة نشطة
-CREATE UNIQUE INDEX uq_person_active_card
-    ON family_card_members(person_id)
-    WHERE removed_at IS NULL;
-
-CREATE INDEX idx_card_members_card ON family_card_members(family_card_id);
-
--- =============================================================================
---  8) واقعات الميلاد
--- =============================================================================
-
-CREATE TABLE birth_records (
-    id                  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    record_number       VARCHAR(20) NOT NULL UNIQUE,
-    person_id           UUID        NOT NULL UNIQUE REFERENCES persons(id) ON DELETE RESTRICT,
-    father_id           UUID REFERENCES persons(id),
-    mother_id           UUID REFERENCES persons(id),
-
-    birth_date          DATE        NOT NULL,
-    birth_time          TIME,
-    hospital_name       VARCHAR(200),
-    governorate_id      INTEGER     NOT NULL REFERENCES governorates(id),
-    birth_weight_grams  INTEGER,
-    delivery_type       VARCHAR(50),          -- طبيعية / قيصرية
-    attending_physician VARCHAR(150),
-    informant_name      VARCHAR(200),         -- اسم المبلِّغ
-    informant_relation  VARCHAR(50),
-
-    registration_date   DATE        NOT NULL DEFAULT CURRENT_DATE,
-    registration_office VARCHAR(150),
-    certificate_issued  BOOLEAN     NOT NULL DEFAULT FALSE,
-
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    deleted_at          TIMESTAMPTZ,
-    created_by          UUID REFERENCES users(id),
-    updated_by          UUID REFERENCES users(id),
-
-    CONSTRAINT ck_birth_weight  CHECK (birth_weight_grams IS NULL OR birth_weight_grams BETWEEN 200 AND 8000),
-    CONSTRAINT ck_birth_reg     CHECK (registration_date >= birth_date),
-    CONSTRAINT ck_parents_differ CHECK (father_id IS NULL OR mother_id IS NULL OR father_id <> mother_id)
-);
-COMMENT ON TABLE birth_records IS 'واقعات الميلاد';
-
-CREATE INDEX idx_births_date   ON birth_records(birth_date)     WHERE deleted_at IS NULL;
-CREATE INDEX idx_births_father ON birth_records(father_id)      WHERE deleted_at IS NULL;
-CREATE INDEX idx_births_mother ON birth_records(mother_id)      WHERE deleted_at IS NULL;
-CREATE INDEX idx_births_gov    ON birth_records(governorate_id) WHERE deleted_at IS NULL;
-
--- =============================================================================
---  9) واقعات الوفاة
--- =============================================================================
-
-CREATE TABLE death_records (
-    id                  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    record_number       VARCHAR(20) NOT NULL UNIQUE,
-    person_id           UUID        NOT NULL UNIQUE REFERENCES persons(id) ON DELETE RESTRICT,
-
-    death_date          DATE        NOT NULL,
-    death_time          TIME,
-    death_place         VARCHAR(200),
-    governorate_id      INTEGER     NOT NULL REFERENCES governorates(id),
-    cause_of_death      VARCHAR(300),
-    cause_category      VARCHAR(100),         -- طبيعية / حادث / أخرى
-    reporting_authority VARCHAR(200),         -- الجهة المبلِّغة
-    certifying_physician VARCHAR(150),
-    burial_place        VARCHAR(200),
-
-    registration_date   DATE        NOT NULL DEFAULT CURRENT_DATE,
-    certificate_issued  BOOLEAN     NOT NULL DEFAULT FALSE,
-
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    deleted_at          TIMESTAMPTZ,
-    created_by          UUID REFERENCES users(id),
-    updated_by          UUID REFERENCES users(id),
-
-    CONSTRAINT ck_death_not_future CHECK (death_date <= CURRENT_DATE),
-    CONSTRAINT ck_death_reg        CHECK (registration_date >= death_date)
-);
-COMMENT ON TABLE death_records IS 'واقعات الوفاة';
-
--- قيد منطقي: تاريخ الوفاة لا يسبق تاريخ الميلاد (يُفحص بمُشغّل لأنه عبر جدولين)
+-- تاريخ الوفاة لا يسبق تاريخ الميلاد
 CREATE OR REPLACE FUNCTION check_death_after_birth()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -475,106 +650,8 @@ CREATE TRIGGER trg_death_after_birth
     BEFORE INSERT OR UPDATE ON death_records
     FOR EACH ROW EXECUTE FUNCTION check_death_after_birth();
 
--- تحديث حالة الشخص تلقائياً عند تسجيل الوفاة
-CREATE OR REPLACE FUNCTION apply_death_to_person()
-RETURNS TRIGGER AS $$
-BEGIN
-    UPDATE persons
-       SET life_status = 'متوفى',
-           updated_at  = NOW()
-     WHERE id = NEW.person_id;
 
-    -- إنهاء علاقات الزوجية النشطة
-    UPDATE family_relations
-       SET is_active = FALSE,
-           end_date  = NEW.death_date,
-           updated_at = NOW()
-     WHERE is_active
-       AND relation_type IN ('زوج', 'زوجة')
-       AND (person_id = NEW.person_id OR related_person_id = NEW.person_id);
-
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER trg_apply_death
-    AFTER INSERT ON death_records
-    FOR EACH ROW EXECUTE FUNCTION apply_death_to_person();
-
-CREATE INDEX idx_deaths_date ON death_records(death_date)     WHERE deleted_at IS NULL;
-CREATE INDEX idx_deaths_gov  ON death_records(governorate_id) WHERE deleted_at IS NULL;
-
--- =============================================================================
---  10) عقود الزواج والطلاق
--- =============================================================================
-
-CREATE TABLE marriage_contracts (
-    id                  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    contract_number     VARCHAR(20) NOT NULL UNIQUE,
-    husband_id          UUID        NOT NULL REFERENCES persons(id) ON DELETE RESTRICT,
-    wife_id             UUID        NOT NULL REFERENCES persons(id) ON DELETE RESTRICT,
-
-    contract_date       DATE        NOT NULL,
-    contract_date_hijri VARCHAR(12),
-    governorate_id      INTEGER     NOT NULL REFERENCES governorates(id),
-    court_name          VARCHAR(200),
-    officiant_name      VARCHAR(150) NOT NULL,   -- المأذون / القاضي
-    witness1_name       VARCHAR(150) NOT NULL,
-    witness1_national_id VARCHAR(12),
-    witness2_name       VARCHAR(150) NOT NULL,
-    witness2_national_id VARCHAR(12),
-
-    dowry_prompt        NUMERIC(14,2),           -- المهر المعجّل
-    dowry_deferred      NUMERIC(14,2),           -- المهر المؤجّل
-    currency            VARCHAR(10) NOT NULL DEFAULT 'IQD',
-
-    is_active           BOOLEAN     NOT NULL DEFAULT TRUE,
-    document_issued     BOOLEAN     NOT NULL DEFAULT FALSE,
-
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    deleted_at          TIMESTAMPTZ,
-    created_by          UUID REFERENCES users(id),
-    updated_by          UUID REFERENCES users(id),
-
-    CONSTRAINT ck_spouses_differ CHECK (husband_id <> wife_id),
-    CONSTRAINT ck_dowry_positive CHECK (
-        (dowry_prompt   IS NULL OR dowry_prompt   >= 0) AND
-        (dowry_deferred IS NULL OR dowry_deferred >= 0)
-    ),
-    CONSTRAINT ck_contract_not_future CHECK (contract_date <= CURRENT_DATE)
-);
-COMMENT ON TABLE marriage_contracts IS 'عقود الزواج';
-
-CREATE INDEX idx_marriage_husband ON marriage_contracts(husband_id)   WHERE deleted_at IS NULL;
-CREATE INDEX idx_marriage_wife    ON marriage_contracts(wife_id)      WHERE deleted_at IS NULL;
-CREATE INDEX idx_marriage_date    ON marriage_contracts(contract_date) WHERE deleted_at IS NULL;
-
-CREATE TABLE divorce_records (
-    id                  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    record_number       VARCHAR(20) NOT NULL UNIQUE,
-    marriage_id         UUID        NOT NULL REFERENCES marriage_contracts(id) ON DELETE RESTRICT,
-
-    divorce_date        DATE        NOT NULL,
-    divorce_date_hijri  VARCHAR(12),
-    divorce_type        VARCHAR(50),        -- رجعي / بائن / خُلع
-    court_name          VARCHAR(200),
-    judge_name          VARCHAR(150),
-    reason              TEXT,
-    custody_notes       TEXT,               -- ترتيبات الحضانة
-    document_issued     BOOLEAN     NOT NULL DEFAULT FALSE,
-
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    deleted_at          TIMESTAMPTZ,
-    created_by          UUID REFERENCES users(id),
-    updated_by          UUID REFERENCES users(id),
-
-    CONSTRAINT ck_divorce_not_future CHECK (divorce_date <= CURRENT_DATE)
-);
-COMMENT ON TABLE divorce_records IS 'واقعات الطلاق';
-
--- الطلاق لا يسبق عقد الزواج
+-- تاريخ الطلاق لا يسبق تاريخ عقد الزواج
 CREATE OR REPLACE FUNCTION check_divorce_after_marriage()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -596,130 +673,80 @@ CREATE TRIGGER trg_divorce_after_marriage
     BEFORE INSERT OR UPDATE ON divorce_records
     FOR EACH ROW EXECUTE FUNCTION check_divorce_after_marriage();
 
-CREATE INDEX idx_divorce_marriage ON divorce_records(marriage_id) WHERE deleted_at IS NULL;
-CREATE INDEX idx_divorce_date     ON divorce_records(divorce_date) WHERE deleted_at IS NULL;
 
--- =============================================================================
---  11) الوثائق والهويات
--- =============================================================================
+-- المولود لا يسبق أباه أو أمه في الميلاد
+CREATE OR REPLACE FUNCTION check_child_after_parents()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_parent_birth DATE;
+BEGIN
+    FOR v_parent_birth IN
+        SELECT birth_date FROM persons
+         WHERE id IN (NEW.father_id, NEW.mother_id)
+    LOOP
+        IF NEW.birth_date <= v_parent_birth THEN
+            RAISE EXCEPTION 'تاريخ ميلاد المولود (%) يجب أن يكون بعد تاريخ ميلاد والديه (%)',
+                NEW.birth_date, v_parent_birth;
+        END IF;
+    END LOOP;
 
-CREATE TABLE documents (
-    id                  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    person_id           UUID                NOT NULL REFERENCES persons(id) ON DELETE RESTRICT,
-    document_type       document_type_enum  NOT NULL,
-    document_number     VARCHAR(30)         NOT NULL,
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
-    issue_date          DATE                NOT NULL,
-    expiry_date         DATE,
-    issuing_authority   VARCHAR(200)        NOT NULL,
-    issuing_governorate_id INTEGER REFERENCES governorates(id),
-    status              document_status_enum NOT NULL DEFAULT 'سارية',
+CREATE TRIGGER trg_child_after_parents
+    BEFORE INSERT OR UPDATE ON birth_records
+    FOR EACH ROW EXECUTE FUNCTION check_child_after_parents();
 
-    replaces_document_id UUID REFERENCES documents(id),   -- في حالة بدل الفاقد
-    scan_path           VARCHAR(300),
-    notes               TEXT,
 
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    deleted_at          TIMESTAMPTZ,
-    created_by          UUID REFERENCES users(id),
-    updated_by          UUID REFERENCES users(id),
+-- ---------------------------------------------------------------------------
+--  4) أثر تسجيل الوفاة على السجلات المرتبطة
+-- ---------------------------------------------------------------------------
 
-    CONSTRAINT uq_document       UNIQUE (document_type, document_number),
-    CONSTRAINT ck_document_dates CHECK (expiry_date IS NULL OR expiry_date > issue_date)
-);
-COMMENT ON TABLE documents IS 'الوثائق والهويات الرسمية';
+CREATE OR REPLACE FUNCTION apply_death_to_person()
+RETURNS TRIGGER AS $$
+BEGIN
+    UPDATE persons
+       SET life_status = 'متوفى',
+           updated_at  = NOW()
+     WHERE id = NEW.person_id;
 
--- وثيقة سارية واحدة فقط من كل نوع لكل شخص
-CREATE UNIQUE INDEX uq_active_document_per_type
-    ON documents(person_id, document_type)
-    WHERE status = 'سارية' AND deleted_at IS NULL;
+    -- إنهاء علاقات الزوجية النشطة
+    UPDATE family_relations
+       SET is_active  = FALSE,
+           end_date   = NEW.death_date,
+           updated_at = NOW()
+     WHERE is_active
+       AND relation_type IN ('زوج', 'زوجة')
+       AND (person_id = NEW.person_id OR related_person_id = NEW.person_id);
 
-CREATE INDEX idx_documents_person ON documents(person_id)       WHERE deleted_at IS NULL;
-CREATE INDEX idx_documents_number ON documents(document_number) WHERE deleted_at IS NULL;
-CREATE INDEX idx_documents_expiry ON documents(expiry_date)     WHERE deleted_at IS NULL;
+    -- ترمُّل الزوج الباقي على قيد الحياة
+    UPDATE persons
+       SET marital_status = 'أرمل',
+           updated_at     = NOW()
+     WHERE life_status = 'حي'
+       AND id IN (
+           SELECT CASE WHEN husband_id = NEW.person_id THEN wife_id ELSE husband_id END
+             FROM marriage_contracts
+            WHERE is_active
+              AND deleted_at IS NULL
+              AND (husband_id = NEW.person_id OR wife_id = NEW.person_id)
+       );
 
--- =============================================================================
---  12) المعاملات والطلبات
--- =============================================================================
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
-CREATE TABLE service_requests (
-    id                  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    reference_number    VARCHAR(25)         NOT NULL UNIQUE,   -- رقم مرجعي للمواطن
-    person_id           UUID                NOT NULL REFERENCES persons(id) ON DELETE RESTRICT,
-    request_type        request_type_enum   NOT NULL,
-    subject             VARCHAR(200)        NOT NULL,
-    details             TEXT,
-    status              request_status_enum NOT NULL DEFAULT 'مقدَّم',
+CREATE TRIGGER trg_apply_death
+    AFTER INSERT ON death_records
+    FOR EACH ROW EXECUTE FUNCTION apply_death_to_person();
 
-    submitted_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    submitted_by        UUID REFERENCES users(id),
-    reviewed_at         TIMESTAMPTZ,
-    reviewed_by         UUID REFERENCES users(id),
-    decision_at         TIMESTAMPTZ,
-    decision_by         UUID REFERENCES users(id),
-    rejection_reason    TEXT,
 
-    fee_amount          NUMERIC(12,2) NOT NULL DEFAULT 0,
-    fee_paid            BOOLEAN       NOT NULL DEFAULT FALSE,
+-- ---------------------------------------------------------------------------
+--  5) عروض مساعدة
+-- ---------------------------------------------------------------------------
 
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    deleted_at          TIMESTAMPTZ,
-
-    CONSTRAINT ck_fee_positive CHECK (fee_amount >= 0),
-    -- الرفض يستوجب ذكر السبب
-    CONSTRAINT ck_rejection_reason CHECK (status <> 'مرفوض' OR rejection_reason IS NOT NULL)
-);
-COMMENT ON TABLE service_requests IS 'المعاملات وطلبات الخدمة';
-
-CREATE TABLE request_attachments (
-    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    request_id      UUID         NOT NULL REFERENCES service_requests(id) ON DELETE CASCADE,
-    file_name       VARCHAR(255) NOT NULL,
-    file_path       VARCHAR(300) NOT NULL,
-    mime_type       VARCHAR(100),
-    file_size_bytes BIGINT,
-    uploaded_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    uploaded_by     UUID REFERENCES users(id)
-);
-
-CREATE INDEX idx_requests_person ON service_requests(person_id) WHERE deleted_at IS NULL;
-CREATE INDEX idx_requests_status ON service_requests(status)    WHERE deleted_at IS NULL;
-CREATE INDEX idx_requests_ref    ON service_requests(reference_number);
-
--- =============================================================================
---  13) سجل التدقيق (Audit Log)
--- =============================================================================
-
-CREATE TABLE audit_log (
-    id              BIGSERIAL PRIMARY KEY,
-    user_id         UUID REFERENCES users(id),
-    username        VARCHAR(50),            -- نسخة ثابتة تبقى حتى لو عُطّل الحساب
-    action          audit_action_enum NOT NULL,
-    resource_type   VARCHAR(50)       NOT NULL,
-    resource_id     VARCHAR(50),
-    old_values      JSONB,                  -- القيم قبل التعديل
-    new_values      JSONB,                  -- القيم بعد التعديل
-    ip_address      INET,
-    user_agent      VARCHAR(300),
-    request_path    VARCHAR(300),
-    succeeded       BOOLEAN NOT NULL DEFAULT TRUE,
-    error_message   TEXT,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-COMMENT ON TABLE audit_log IS 'سجل التدقيق — لا يُعدَّل ولا يُحذف منه شيء';
-
-CREATE INDEX idx_audit_user     ON audit_log(user_id);
-CREATE INDEX idx_audit_resource ON audit_log(resource_type, resource_id);
-CREATE INDEX idx_audit_created  ON audit_log(created_at DESC);
-CREATE INDEX idx_audit_action   ON audit_log(action);
-
--- =============================================================================
---  14) عروض مساعدة (Views)
--- =============================================================================
-
--- عرض مبسّط للأشخاص الأحياء مع عناوينهم الحالية
+-- الأشخاص مع عناوينهم الحالية وأعمارهم
 CREATE OR REPLACE VIEW v_persons_current AS
 SELECT
     p.id,
@@ -742,6 +769,7 @@ WHERE p.deleted_at IS NULL;
 
 COMMENT ON VIEW v_persons_current IS 'الأشخاص مع عناوينهم الحالية وأعمارهم';
 
+
 -- إحصاء سكاني حسب المحافظة والجنس
 CREATE OR REPLACE VIEW v_population_stats AS
 SELECT
@@ -754,6 +782,30 @@ JOIN addresses    a ON a.person_id = p.id AND a.is_current AND a.deleted_at IS N
 JOIN governorates g ON g.id = a.governorate_id
 WHERE p.deleted_at IS NULL
 GROUP BY g.name_ar, p.gender;
+
+COMMENT ON VIEW v_population_stats IS 'إحصاء السكان حسب المحافظة والجنس';
+
+
+-- الوثائق التي أوشكت على الانتهاء (خلال 90 يوماً)
+CREATE OR REPLACE VIEW v_expiring_documents AS
+SELECT
+    d.id,
+    d.document_type,
+    d.document_number,
+    d.expiry_date,
+    (d.expiry_date - CURRENT_DATE) AS days_remaining,
+    p.national_id,
+    p.first_name || ' ' || p.father_name || ' ' ||
+        p.grandfather_name || ' ' || p.family_name AS full_name
+FROM documents d
+JOIN persons p ON p.id = d.person_id
+WHERE d.deleted_at IS NULL
+  AND p.deleted_at IS NULL
+  AND d.status = 'سارية'
+  AND d.expiry_date IS NOT NULL
+  AND d.expiry_date BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '90 days';
+
+COMMENT ON VIEW v_expiring_documents IS 'الوثائق السارية التي تنتهي خلال 90 يوماً';
 
 COMMIT;
 
