@@ -49,6 +49,16 @@ def engine():
             conn.execute(sa_text("DROP SCHEMA IF EXISTS public CASCADE"))
             conn.execute(sa_text("CREATE SCHEMA public"))
             conn.execute(sa_text('CREATE EXTENSION IF NOT EXISTS "pg_trgm"'))
+
+            # الأنواع المعدودة تُنشأ صراحةً: الأعمدة مُعرَّفة بـ create_type=False
+            # لأن الترحيل الأساسي هو من ينشئها في الإنتاج. SQLAlchemy 2.0 كان
+            # يتجاهل هذا الخيار في create_all وينشئها على أي حال، و2.1 يحترمه
+            # فتفشل الجداول لغياب أنواعها. الإنشاء هنا يصحّ على النسختين.
+            from app.models.enums import ENUM_TYPE_NAMES
+
+            for py_enum, type_name in ENUM_TYPE_NAMES.items():
+                values = ", ".join("'" + m.value + "'" for m in py_enum)
+                conn.execute(sa_text(f"CREATE TYPE {type_name} AS ENUM ({values})"))
         Base.metadata.create_all(bind=eng)
 
         # الجداول وحدها لا تكفي: دالة تطبيع النص العربي والمُشغّلات والعروض
