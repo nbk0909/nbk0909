@@ -238,3 +238,18 @@ app.include_router(auth_routes.router, prefix=settings.API_V1_PREFIX)
 app.include_router(person_routes.router, prefix=settings.API_V1_PREFIX)
 app.include_router(vital_routes.router, prefix=settings.API_V1_PREFIX)
 app.include_router(document_routes.router, prefix=settings.API_V1_PREFIX)
+
+
+# -----------------------------------------------------------------------------
+# واجهة PWA — تُقدَّم من الخادم نفسه على المسار /app
+# -----------------------------------------------------------------------------
+# تقديم الواجهة والواجهة البرمجية من أصل واحد يُغني عن إعداد CORS وعن خادم
+# ثانٍ في التشغيل البسيط. في النشر عبر Docker يتولّى nginx ذلك.
+from pathlib import Path as _Path
+
+from fastapi.staticfiles import StaticFiles
+
+FRONTEND_DIR = _Path(__file__).resolve().parents[2] / "frontend"
+
+if FRONTEND_DIR.is_dir():
+    app.mount("/app", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
