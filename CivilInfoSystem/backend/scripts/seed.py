@@ -54,6 +54,9 @@ from app.models import (
 )
 from app.utils.validators import generate_national_id
 
+# كلمة مرور الحسابات التجريبية — للتجربة المحلية فقط
+DEMO_PASSWORD = "111"
+
 # ---------------------------------------------------------------------------
 # التقسيمات الإدارية
 # ---------------------------------------------------------------------------
@@ -511,22 +514,29 @@ class Seeder:
         print(f"  ✓ {len(perms)} صلاحية موزّعة على {len(ROLES)} أدوار")
 
     def seed_admin(self) -> None:
-        """ينشئ حساب المدير الافتراضي.
+        """ينشئ حسابَي المدير ومدير السجل للتجربة.
 
-        كلمة المرور الافتراضية معروفة عمداً، والحساب مُعلَّم بـ
-        must_change_password ليُجبَر المستخدم على تغييرها عند أول دخول.
+        كلمة المرور للحسابين ``111`` — قصيرة عمداً لتسهيل التجربة على
+        الهاتف، ولا تمرّ على سياسة كلمات المرور لأن التعبئة تتجاوزها.
+        لا يُلزَم الحسابان بتغييرها عند أول دخول، وإلا لاضطُرّ المجرِّب
+        إلى اختيار كلمة قوية فوراً.
+
+        ⚠️  بيانات تجريبية فقط. أي تغيير لاحق لكلمة المرور من داخل النظام
+        يخضع للسياسة الكاملة (10 أحرف فأكثر، بحروف وأرقام ورموز).
         """
         from app.core.security import hash_password
+
+        password_hash = hash_password(DEMO_PASSWORD)
 
         admin_role = self.db.scalar(select(Role).where(Role.code == "admin"))
         admin = User(
             username="admin",
             email="admin@civil.gov",
-            password_hash=hash_password("Admin@2026!"),
+            password_hash=password_hash,
             full_name_ar="مدير النظام",
             governorate_id=self.govs["10"].id,
             is_active=True,
-            must_change_password=True,
+            must_change_password=False,
         )
         admin.roles = [admin_role]
         self.db.add(admin)
@@ -535,15 +545,15 @@ class Seeder:
         registrar = User(
             username="registrar",
             email="registrar@civil.gov",
-            password_hash=hash_password("Registrar@2026!"),
+            password_hash=password_hash,
             full_name_ar="سجّاد عبد الأمير",
             governorate_id=self.govs["10"].id,
-            must_change_password=True,
+            must_change_password=False,
         )
         registrar.roles = [registrar_role]
         self.db.add(registrar)
         self.db.flush()
-        print("  ✓ حسابان: admin / registrar (يجب تغيير كلمتَي المرور عند أول دخول)")
+        print(f"  ✓ حسابان: admin / registrar — كلمة المرور للاثنين: {DEMO_PASSWORD}")
 
     def seed_persons(self) -> None:
         for spec in ALL_SPECS:

@@ -125,6 +125,51 @@ async def add_security_headers(request: Request, call_next):
 # معالجات الأخطاء — رسائل عربية دون تسريب أي بيانات شخصية
 # -----------------------------------------------------------------------------
 
+# بادئات إنجليزية يضيفها Pydantic أمام رسائل المُتحقِّقات المخصّصة.
+# تُحذف حتى لا تظهر كلمة أجنبية في مقدّمة رسالة عربية موجَّهة للمستخدم.
+_PYDANTIC_PREFIXES = ("Value error, ", "Assertion failed, ")
+
+# رسائل Pydantic القياسية مقابل ما يُعرض للمستخدم بالعربية
+_STANDARD_MESSAGES = {
+    "Field required": "هذا الحقل مطلوب",
+    "Input should be a valid date": "أدخل تاريخاً صالحاً",
+    "Input should be a valid integer": "أدخل رقماً صحيحاً",
+    "Input should be a valid number": "أدخل رقماً صالحاً",
+    "Input should be a valid string": "أدخل نصاً صالحاً",
+}
+
+
+def _clean_message(message: str) -> str:
+    """يحوّل رسالة التحقق إلى نص عربي خالص."""
+    for prefix in _PYDANTIC_PREFIXES:
+        if message.startswith(prefix):
+            return message[len(prefix):]
+
+    if message in _STANDARD_MESSAGES:
+        return _STANDARD_MESSAGES[message]
+
+    # رسائل الطول والحدود تُعاد صياغتها بالعربية
+    import re
+
+    match = re.match(r"String should have at least (\d+) characters?", message)
+    if match:
+        return f"يجب ألا يقل الطول عن {match.group(1)} حرفاً"
+
+    match = re.match(r"String should have at most (\d+) characters?", message)
+    if match:
+        return f"يجب ألا يزيد الطول عن {match.group(1)} حرفاً"
+
+    match = re.match(r"Input should be greater than or equal to (\S+)", message)
+    if match:
+        return f"القيمة يجب ألا تقل عن {match.group(1)}"
+
+    match = re.match(r"Input should be less than or equal to (\S+)", message)
+    if match:
+        return f"القيمة يجب ألا تزيد عن {match.group(1)}"
+
+    return message
+
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(_request: Request, exc: RequestValidationError):
     """يحوّل أخطاء التحقق إلى رسائل عربية مفهومة."""
@@ -139,7 +184,7 @@ async def validation_exception_handler(_request: Request, exc: RequestValidation
                 # ليتمكّن العميل من إبراز الحقل الصحيح في النموذج
                 "الحقل": field_label(raw_name.split(".")[-1]),
                 "المعرّف": raw_name,
-                "الرسالة": err["msg"],
+                "الرسالة": _clean_message(err["msg"]),
             }
         )
     return JSONResponse(

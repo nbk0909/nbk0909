@@ -24,10 +24,16 @@ from app.utils.arabic import normalize_arabic
 
 logger = logging.getLogger(__name__)
 
-# عتبة التشابه في البحث التقريبي. القيمة الافتراضية في pg_trgm هي 0.3،
-# وخفضناها قليلاً لأن الأسماء العربية الرباعية طويلة، فخطأ حرف واحد فيها
-# يخفض درجة التشابه أكثر مما يخفضها في نص قصير.
-SIMILARITY_THRESHOLD = 0.25
+# عتبتان لا واحدة، لأن المقياسين مختلفان ولا تُقارن قيمهما:
+#
+#   * pg_trgm يقيس تقاطع ثلاثيات الحروف، فقيمه منخفضة بطبعها؛ 0.35 تلتقط
+#     الخطأ الإملائي في اسم رباعي دون أن تجرّ كل حاملي اللقب نفسه.
+#   * SequenceMatcher يقيس أطول تتابع مشترك، فقيمه أعلى كثيراً لنصّين
+#     متقاربَي الطول. استعمال 0.35 معه يُرجع السجل كله تقريباً.
+#
+# ضبطهما بقيمة واحدة كان يجعل البحث عن اسم بعينه يُرجع 54 نتيجة من 54.
+SIMILARITY_THRESHOLD_TRGM = 0.35
+SIMILARITY_THRESHOLD_SEQUENCE = 0.62
 
 # سقف المرشّحين في البحث التقريبي داخل SQLite — يمنع تحميل الجدول كاملاً
 SQLITE_FUZZY_CANDIDATE_LIMIT = 2000
@@ -231,7 +237,7 @@ def _search_fuzzy_postgres(
     similarity = func.similarity(Person.full_name_normalized, normalized)
 
     stmt = _apply_filters(_base_query(), criteria).where(
-        similarity > SIMILARITY_THRESHOLD
+        similarity > SIMILARITY_THRESHOLD_TRGM
     )
 
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
@@ -272,7 +278,7 @@ def _search_fuzzy_python(
         score = SequenceMatcher(
             None, normalized, person.full_name_normalized or ""
         ).ratio()
-        if score > SIMILARITY_THRESHOLD:
+        if score > SIMILARITY_THRESHOLD_SEQUENCE:
             scored.append((person, score))
 
     scored.sort(key=lambda pair: pair[1], reverse=True)

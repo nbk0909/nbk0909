@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <!--
+    viewport-fit=cover إلزامي في الأيفون: بدونه يترك النظام أشرطة بيضاء
+    حول النتوء والحواف المنحنية بدل أن تمتد الصفحة تحتها.
+    user-scalable=no محذوف عمداً — منع التكبير يضرّ ضعاف البصر.
+  -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="description" content="نظام المعلومات المدنية الشامل — إدارة السجل المدني والأحوال الشخصية">
+  <meta name="theme-color" content="#0d5a54">
+
+  <title>نظام المعلومات المدنية</title>
+
+  <!-- تثبيت التطبيق على شاشة الأيفون الرئيسية -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="السجل المدني">
+  <link rel="apple-touch-icon" href="assets/icons/icon-180.png">
+  <link rel="icon" type="image/png" href="assets/icons/favicon.png">
+
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+
+<!-- شاشة الإقلاع -->
+<div id="splash" class="splash">
+  <div class="splash__mark" aria-hidden="true"></div>
+  <p class="splash__text">نظام المعلومات المدنية</p>
+  <div class="spinner" role="status" aria-label="جارٍ التحميل"></div>
+</div>
+
+<!-- شريط انقطاع الاتصال -->
+<div id="offline-bar" class="offline-bar" hidden>
+  لا يوجد اتصال بالشبكة — تُعرض البيانات المحفوظة
+</div>
+
+<!-- ===================== شاشة الدخول ===================== -->
+<main id="view-login" class="auth" hidden>
+  <form id="login-form" class="auth__card" novalidate>
+    <div class="auth__mark" aria-hidden="true"></div>
+    <h1 class="auth__title">نظام المعلومات المدنية</h1>
+    <p class="auth__subtitle">سجّل الدخول للمتابعة</p>
+
+    <div id="login-error" class="alert alert--error" hidden role="alert"></div>
+
+    <label class="field">
+      <span class="field__label">اسم المستخدم</span>
+      <input class="field__input" type="text" name="username" autocomplete="username"
+             required minlength="3" inputmode="latin" dir="ltr">
+      <span class="field__error" data-error-for="username"></span>
+    </label>
+
+    <label class="field">
+      <span class="field__label">كلمة المرور</span>
+      <span class="field__wrap">
+        <input class="field__input" type="password" name="password"
+               autocomplete="current-password" required dir="ltr">
+        <button type="button" class="field__toggle" data-toggle-password
+                aria-label="إظهار كلمة المرور">👁</button>
+      </span>
+      <span class="field__error" data-error-for="password"></span>
+    </label>
+
+    <label class="field" id="totp-field" hidden>
+      <span class="field__label">رمز المصادقة الثنائية</span>
+      <input class="field__input" type="text" name="totp_code" inputmode="numeric"
+             autocomplete="one-time-code" maxlength="6" dir="ltr">
+    </label>
+
+    <button type="submit" class="btn btn--primary btn--block">دخول</button>
+  </form>
+</main>
+
+<!-- ===================== التطبيق ===================== -->
+<div id="app" hidden>
+
+  <header class="topbar">
+    <button class="topbar__back icon-btn" id="btn-back" hidden aria-label="رجوع">
+      <span aria-hidden="true">→</span>
+    </button>
+    <h1 class="topbar__title" id="page-title">الرئيسية</h1>
+    <button class="topbar__menu icon-btn" id="btn-menu" aria-label="القائمة"
+            aria-expanded="false" aria-controls="menu-sheet">
+      <span aria-hidden="true">☰</span>
+    </button>
+  </header>
+
+  <main class="content" id="content" tabindex="-1"></main>
+
+  <!-- شريط التنقّل السفلي — نمط الأيفون -->
+  <nav class="tabbar" aria-label="التنقّل الرئيسي">
+    <a class="tabbar__item" href="#/" data-tab="/">
+      <span class="tabbar__icon" aria-hidden="true">▦</span>
+      <span class="tabbar__label">الرئيسية</span>
+    </a>
+    <a class="tabbar__item" href="#/search" data-tab="/search">
+      <span class="tabbar__icon" aria-hidden="true">⌕</span>
+      <span class="tabbar__label">البحث</span>
+    </a>
+    <a class="tabbar__item" href="#/person/new" data-tab="/person/new">
+      <span class="tabbar__icon" aria-hidden="true">＋</span>
+      <span class="tabbar__label">تسجيل</span>
+    </a>
+    <a class="tabbar__item" href="#/requests" data-tab="/requests">
+      <span class="tabbar__icon" aria-hidden="true">☰</span>
+      <span class="tabbar__label">المعاملات</span>
+    </a>
+  </nav>
+
+  <!-- قائمة منسدلة -->
+  <div class="sheet" id="menu-sheet" hidden>
+    <div class="sheet__backdrop" data-close-sheet></div>
+    <div class="sheet__panel" role="dialog" aria-modal="true" aria-label="القائمة">
+      <div class="sheet__handle" aria-hidden="true"></div>
+      <div class="sheet__user">
+        <div class="avatar" id="menu-avatar" aria-hidden="true"></div>
+        <div>
+          <p class="sheet__name" id="menu-name"></p>
+          <p class="sheet__role" id="menu-role"></p>
+        </div>
+      </div>
+      <nav class="sheet__links">
+        <a href="#/births" class="sheet__link" data-close-sheet>واقعات الميلاد</a>
+        <a href="#/deaths" class="sheet__link" data-close-sheet>واقعات الوفاة</a>
+        <a href="#/marriages" class="sheet__link" data-close-sheet>عقود الزواج</a>
+        <a href="#/documents/expiring" class="sheet__link" data-close-sheet>وثائق توشك على الانتهاء</a>
+        <a href="#/settings" class="sheet__link" data-close-sheet>الإعدادات</a>
+      </nav>
+      <button class="btn btn--danger btn--block" id="btn-logout">تسجيل الخروج</button>
+    </div>
+  </div>
+</div>
+
+<!-- إشعارات مؤقتة -->
+<div id="toasts" class="toasts" aria-live="polite" aria-atomic="false"></div>
+
+<script src="js/api.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/views/dashboard.js"></script>
+<script src="js/views/search.js"></script>
+<script src="js/views/person.js"></script>
+<script src="js/views/records.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
