@@ -40,3 +40,34 @@ packages/
 # OS
 .DS_Store
 Thumbs.db
+
+# ========================
+# Python / نظام المعلومات المدنية
+# ========================
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# البيئة والأسرار — لا تُرفع أبداً
+.env
+.env.local
+.env.*.local
+
+# قواعد بيانات التطوير
+*.db
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+
+# الملفات المرفوعة والنسخ الاحتياطية
+CivilInfoSystem/uploads/
+CivilInfoSystem/backups/
