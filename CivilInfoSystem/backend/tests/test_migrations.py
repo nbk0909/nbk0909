@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -41,7 +42,7 @@ def _reset_schema(engine) -> None:
 def _run_alembic(*args: str) -> subprocess.CompletedProcess:
     env = {**os.environ, "DATABASE_URL": TEST_URL}
     return subprocess.run(
-        ["alembic", *args],
+        [sys.executable, "-m", "alembic", *args],
         cwd=BACKEND,
         env=env,
         capture_output=True,
@@ -179,7 +180,7 @@ def test_schema_file_is_current():
     before = SCHEMA_FILE.read_text(encoding="utf-8")
 
     result = subprocess.run(
-        ["python", "-m", "scripts.generate_schema"],
+        [sys.executable, "-m", "scripts.generate_schema"],
         cwd=BACKEND,
         env={**os.environ, "DATABASE_URL": "sqlite:///:memory:"},
         capture_output=True,
